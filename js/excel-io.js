@@ -2031,8 +2031,7 @@
     section: 'FFDCE6F1',   // MPS(PCS) 那三列
     subtotal: 'FFEBF1DE',  // TTL
     loading: 'FFFFCC99',   // Loading Rate
-    blue: 'FF4472C4',      // 總表人力相關的字
-    navy: 'FF000080',      // RMA人力需求表的字
+    blue: 'FF4472C4',      // 人力相關的字
     white: 'FFFFFFFF'
   };
   /*
@@ -2443,158 +2442,7 @@
     return { worksheet: ws, rows: rows, rows2: rows2, monthCol: R.monthCol, months: R.months, yoLimit: yoLimit };
   }
 
-  /* ---------- RMA人力需求：先建立表格的樣式和框線，內容之後再填 ---------- */
-
-  var RMA_SHEET = 'RMA人力需求';
-  var RMA_LAYOUT = {
-    firstCol: 2, unitCol: 3, monthCol: 4, months: 6, noteCol: 10,
-    noteRow: 3,            // 第 3 列：法定加班上限（左）、Cut-off（右）
-    headRow: 4,            // 第 4 列：月份表頭
-    lastRow: 13
-  };
-  var RMA_ROWS = [
-    { row: 5, key: 'section', label: 'MPS (PCS)', merge: true, section: true },
-    { row: 6, key: 'hours', label: '需求工時', unit: 'min/月' },
-    { row: 7, key: 'weekdays', label: '平日工作天數', unit: '天/月' },
-    { row: 8, key: 'holidays', label: '假日工作天數', unit: '天/月' },
-    { row: 9, key: 'workMinutes', label: '工作時間', unit: '分/天' },
-    { row: 10, key: 'overtimeMinutes', label: '加班時間', unit: '分/天' },
-    { row: 11, key: 'efficiency', label: '綜合效率%', merge: true },
-    { row: 12, key: 'attendance', label: '出勤率%', merge: true },
-    { row: 13, key: 'needOnline', label: '需求人力', unit: 'On line', navy: true, subtotal: true }
-  ];
-
-  /*
-   * 在活頁簿裡建立「RMA人力需求」工作表（已經有的話先刪掉重建）。
-   * o.cutoff     右上角的 Cut-off 文字，例如 'Cut-off: 2026/10/13Ver:A'
-   * o.monthRefs  各月表頭要參照的儲存格 [{ sheet, col, row, text }]（參照總表的月份）
-   * o.links      各列要參照的儲存格 { hours: [{ sheet, col, row, value, numFmt }], weekdays: […], … }
-   * o.qty        MPS (PCS) 那一列：各月 RMA 數量 [[120, 300], [80, 0], …]，填公式 =120+300
-   * 回傳 { worksheet, rows: { hours: 6, … }, monthCol, months }
-   */
-  function addRmaManpowerSheet(wb, o) {
-    o = o || {};
-    wb.worksheets
-      .filter(function (w) { return sameSheetName(w.name, RMA_SHEET); })
-      .forEach(function (w) { wb.removeWorksheet(w.id); });
-    var ws = wb.addWorksheet(RMA_SHEET);
-    var R = RMA_LAYOUT;
-    var C = REPORT_COLOR;
-    var THIN = { style: 'thin' }, THICK = { style: 'medium' };
-    var LEFT = { horizontal: 'left', vertical: 'middle' };
-    var CENTER = { horizontal: 'center', vertical: 'middle' };
-    function font(extra) { return Object.assign({ name: REPORT_FONT, size: 12, charset: 136 }, extra); }
-
-    // 行寬、列高；表格外的空白格子也設成微軟正黑體
-    ws.getColumn(1).width = 3.5;
-    ws.getColumn(R.firstCol).width = 15;
-    ws.getColumn(R.unitCol).width = 11;
-    for (var mc = R.monthCol; mc < R.monthCol + R.months; mc++) ws.getColumn(mc).width = 11;
-    ws.getColumn(R.noteCol).width = 30;
-    for (var fc = 1; fc <= R.noteCol + 1; fc++) ws.getColumn(fc).font = font();
-    for (var fr = 1; fr <= R.lastRow + 1; fr++) {
-      for (fc = 1; fc <= R.noteCol + 1; fc++) ws.getCell(fr, fc).font = font();
-      ws.getRow(fr).height = fr === R.noteRow ? 18 : 21;
-    }
-
-    function border(r, c) {
-      return {
-        top: r === R.headRow ? THICK : THIN,
-        bottom: r === R.lastRow ? THICK : THIN,
-        left: c === R.firstCol ? THICK : THIN,
-        right: c === R.noteCol ? THICK : THIN
-      };
-    }
-
-    // 第 3 列：法定加班上限（紅底白字置中，B、C 合併）；右邊 J 欄是 Cut-off
-    ws.getCell(R.noteRow, R.firstCol).value = '法定加班上限' + OVERTIME_LIMIT + 'hr/人';
-    ws.mergeCells(R.noteRow, R.firstCol, R.noteRow, R.unitCol);
-    ws.getCell(R.noteRow, R.firstCol).style = {
-      font: font({ bold: true, color: { argb: C.white } }), fill: solid(C.red), alignment: CENTER
-    };
-    ws.getCell(R.noteRow, R.unitCol).style = { font: font(), fill: solid(C.red) };
-    var cut = ws.getCell(R.noteRow, R.noteCol);
-    cut.value = o.cutoff || '';
-    cut.style = { font: font({ bold: true, size: 11 }), alignment: { horizontal: 'left', vertical: 'bottom' } };
-
-    // 第 4 列：表頭（深藍底白字；B、C 合併畫斜線；備註靠左）
-    for (var c = R.firstCol; c <= R.noteCol; c++) {
-      var b = border(R.headRow, c);
-      if (c <= R.unitCol) b.diagonal = { up: false, down: true, style: 'medium', color: { argb: 'FF000000' } };
-      ws.getCell(R.headRow, c).style = {
-        font: font({ size: 14, bold: true, color: { argb: C.white } }),
-        fill: solid(C.head), alignment: c === R.noteCol ? LEFT : CENTER, border: b
-      };
-    }
-    ws.mergeCellsWithoutStyle(R.headRow, R.firstCol, R.headRow, R.unitCol);
-    (o.monthRefs || []).slice(0, R.months).forEach(function (ref, i) {
-      if (!ref || !ref.sheet) return;
-      ws.getCell(R.headRow, R.monthCol + i).value = {
-        formula: sheetRef(ref.sheet) + numToCol(ref.col) + ref.row, result: ref.text || ''
-      };
-    });
-    ws.getCell(R.headRow, R.noteCol).value = '備註';
-
-    // 第 5 到 13 列
-    var rows = { noteRow: R.noteRow, headRow: R.headRow };
-    RMA_ROWS.forEach(function (d) {
-      rows[d.key] = d.row;
-      var fill = d.section ? solid(C.section) : d.subtotal ? solid(C.subtotal) : null;
-      var color = d.navy ? { argb: C.navy } : undefined;
-      for (var c = R.firstCol; c <= R.noteCol; c++) {
-        var st = { border: border(d.row, c), alignment: c <= R.unitCol || c === R.noteCol ? LEFT : CENTER, font: font({ color: color }) };
-        if (fill) st.fill = fill;
-        if (c <= R.unitCol) st.font = font({ bold: !(d.navy && c === R.firstCol), color: color, size: d.section ? 14 : 12 });
-        ws.getCell(d.row, c).style = st;
-      }
-      if (d.label) ws.getCell(d.row, R.firstCol).value = d.label;
-      if (d.unit) ws.getCell(d.row, R.unitCol).value = d.unit;
-      if (d.merge) ws.mergeCellsWithoutStyle(d.row, R.firstCol, d.row, R.unitCol);
-    });
-
-    // MPS (PCS)：各月 RMA 項目的數量相加
-    (o.qty || []).slice(0, R.months).forEach(function (list, m) {
-      if (!list || !list.length) return;
-      var total = list.reduce(function (x, y) { return x + y; }, 0);
-      var cell = ws.getCell(rows.section, R.monthCol + m);
-      cell.value = { formula: list.join('+'), result: total };
-      cell.numFmt = INTEGER_FORMAT;
-    });
-    // 參照其他工作表的列（MPS 的 RMA總需求工時、總表的輸入）
-    var links = o.links || {};
-    Object.keys(links).forEach(function (key) {
-      if (!rows[key]) return;
-      (links[key] || []).slice(0, R.months).forEach(function (ref, m) {
-        if (!ref) return;
-        var f = { formula: sheetRef(ref.sheet) + numToCol(ref.col) + ref.row };
-        if (isNum(ref.value)) f.result = ref.value;
-        var cell = ws.getCell(rows[key], R.monthCol + m);
-        cell.value = f;
-        cell.numFmt = ref.numFmt || 'General';
-      });
-    });
-
-    // 需求人力 On line = 需求工時 ÷（平日 + 假日工作天數）÷（工作時間 + 加班時間）÷ 綜合效率% ÷ 出勤率%
-    // 顯示到小數點第二位
-    function rnum(key, m) {
-      var v = plainValue(cellRawValue(ws.getCell(rows[key], R.monthCol + m)));
-      return typeof v === 'number' ? v : (v === null || v === undefined || v === '' ? 0 : NaN);
-    }
-    for (var m = 0; m < R.months; m++) {
-      var L = numToCol(R.monthCol + m);
-      var a = function (key) { return L + rows[key]; };
-      var f = a('hours') + '/(' + a('weekdays') + '+' + a('holidays') + ')/(' + a('workMinutes') + '+' +
-        a('overtimeMinutes') + ')/' + a('efficiency') + '/' + a('attendance');
-      var res = rnum('hours', m) / (rnum('weekdays', m) + rnum('holidays', m)) /
-        (rnum('workMinutes', m) + rnum('overtimeMinutes', m)) / rnum('efficiency', m) / rnum('attendance', m);
-      var on = ws.getCell(rows.needOnline, R.monthCol + m);
-      on.value = isFinite(res) ? { formula: f, result: res } : { formula: f };
-      on.numFmt = '#,##0.00';
-    }
-
-    wb.calcProperties = Object.assign({}, wb.calcProperties, { fullCalcOnLoad: true });
-    return { worksheet: ws, rows: rows, monthCol: R.monthCol, months: R.months };
-  }
+  /* ---------- 第 7 步 RMA 區塊：各項目的數量 ---------- */
 
   /*
    * 從 MPS 工作表第 7 步的 RMA 區塊讀出各項目各月的數量。
@@ -2635,7 +2483,7 @@
   }
 
   var ExcelIO = {
-    VERSION: 5,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
+    VERSION: 6,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
     colToNum: colToNum,
     numToCol: numToCol,
     normalizeText: normalizeText,
@@ -2687,10 +2535,6 @@
     OFFLINE_RATE: OFFLINE_RATE,
     REPORT_OFFLINE: REPORT_OFFLINE,
     YO_LIMIT_DEFAULT: YO_LIMIT_DEFAULT,
-    RMA_SHEET: RMA_SHEET,
-    RMA_LAYOUT: RMA_LAYOUT,
-    RMA_ROWS: RMA_ROWS,
-    addRmaManpowerSheet: addRmaManpowerSheet,
     readRmaQuantities: readRmaQuantities,
     REPORT_SECOND_OFFSET: REPORT_SECOND_OFFSET,
     findReportLinks: findReportLinks,

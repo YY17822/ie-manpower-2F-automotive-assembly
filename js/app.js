@@ -18,8 +18,7 @@
     { id: 'summary', title: '需求工時匯總', note: '每月總工時、量產／試產' },
     { id: 'rma', title: 'RMA 需求工時', note: '重工數量 × CT.' },
     { id: 'manpower', title: '匯入人力報表', note: '未來六個月的人力預計' },
-    { id: 'report', title: '總表', note: '各月人力需求總覽' },
-    { id: 'rma-manpower', title: 'RMA人力需求', note: '重工的人力需求' }
+    { id: 'report', title: '總表', note: '各月人力需求總覽' }
   ];
 
   /* ---------- 這個專案的身分（js/config.js） ---------- */
