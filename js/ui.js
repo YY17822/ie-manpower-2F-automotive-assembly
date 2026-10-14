@@ -14,18 +14,24 @@
    * o.title   還沒選檔時的大字
    * o.sub     還沒選檔時的小字
    * o.onFile  選好檔案後呼叫 onFile(file)
+   * o.onFiles 可以一次選好幾個檔案；有給的話改呼叫 onFiles([file, …])（可省略）
    * 回傳 { el, setIdle(), setBusy(檔名), setFile(檔名, 小字) }
    */
   function fileDrop(o) {
-    var input = h('input', { type: 'file', accept: o.accept || '.xlsx,.xlsm', class: 'visually-hidden', id: o.id });
+    var input = h('input', { type: 'file', accept: o.accept || '.xlsx,.xlsm', class: 'visually-hidden', id: o.id, multiple: !!o.onFiles });
+    function hand(list) {
+      var files = Array.prototype.slice.call(list || []);
+      if (!files.length) return;
+      if (o.onFiles) o.onFiles(files); else o.onFile(files[0]);
+    }
     var main = h('span', { class: 'drop-main', text: o.title });
     var sub = h('span', { class: 'drop-sub', text: o.sub });
     var el = h('label', { class: 'drop', for: o.id }, input, main, sub);
 
     input.addEventListener('change', function () {
-      var f = input.files[0];
+      var files = Array.prototype.slice.call(input.files || []);
       input.value = '';
-      if (f) o.onFile(f);
+      hand(files);
     });
     ['dragenter', 'dragover'].forEach(function (ev) {
       el.addEventListener(ev, function (e) { e.preventDefault(); el.classList.add('is-over'); });
@@ -34,8 +40,7 @@
       el.addEventListener(ev, function (e) { e.preventDefault(); el.classList.remove('is-over'); });
     });
     el.addEventListener('drop', function (e) {
-      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-      if (f) o.onFile(f);
+      hand(e.dataTransfer && e.dataTransfer.files);
     });
 
     return {

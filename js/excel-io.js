@@ -571,8 +571,6 @@
     var dataStartRow = opts.dataStartRow;
     var headerEnd = dataStartRow - 1;
     var keepCols = opts.keepCols;
-    var wanted = {};
-    opts.values.forEach(function (v) { wanted[matchKey(v)] = true; });
 
     var newIndex = {}; // 原行號 -> 新行號
     keepCols.forEach(function (c, i) { newIndex[c] = i + 1; });
@@ -649,27 +647,10 @@
     }
 
     // 資料列：選取行的值符合才保留
-    var matched = 0;
-    var total = 0;
-    var outRow = dataStartRow;
-    for (r = dataStartRow; r <= opts.lastRow; r++) {
-      total++;
-      srcRow = ws.findRow(r);
-      if (!srcRow) continue;
-      var key = matchKey(cellRawValue(srcRow.findCell(opts.selectorCol)));
-      if (key === '' || !wanted[key]) continue;
-      matched++;
-      dstRow = ows.getRow(outRow++);
-      if (srcRow.height) dstRow.height = srcRow.height;
-      for (i = 0; i < keepCols.length; i++) {
-        src = srcRow.findCell(keepCols[i]);
-        if (!src) continue;
-        dst = dstRow.getCell(i + 1);
-        dst.style = withoutFill(src.style);
-        var val = exportValue(src);
-        if (val !== null) dst.value = val;
-      }
-    }
+    var rowsOut = appendFilteredRows(ows, dataStartRow, ws, opts);
+    var matched = rowsOut.matched;
+    var total = rowsOut.total;
+    var outRow = rowsOut.nextRow;
 
     // 凍結窗格、顯示比例
     var v = (ws.views && ws.views[0]) || {};
@@ -701,6 +682,92 @@
       lastRow: outRow - 1,
       colCount: keepCols.length
     };
+  }
+
+  /*
+   * 把 ws 裡「選取行的值符合」的資料列，依序寫到 ows 的第 outRow 列起。
+   * o: { dataStartRow, selectorCol, values, keepCols, lastRow }
+   * 回傳 { matched, total, nextRow }（nextRow = 下一個空的列號）
+   */
+  function appendFilteredRows(ows, outRow, ws, o) {
+    var wanted = {};
+    o.values.forEach(function (v) { wanted[matchKey(v)] = true; });
+    var keepCols = o.keepCols;
+    var matched = 0;
+    var total = 0;
+    for (var r = o.dataStartRow; r <= o.lastRow; r++) {
+      total++;
+      var srcRow = ws.findRow(r);
+      if (!srcRow) continue;
+      var key = matchKey(cellRawValue(srcRow.findCell(o.selectorCol)));
+      if (key === '' || !wanted[key]) continue;
+      matched++;
+      var dstRow = ows.getRow(outRow++);
+      if (srcRow.height) dstRow.height = srcRow.height;
+      for (var i = 0; i < keepCols.length; i++) {
+        var src = srcRow.findCell(keepCols[i]);
+        if (!src) continue;
+        var dst = dstRow.getCell(i + 1);
+        dst.style = withoutFill(src.style);
+        var val = exportValue(src);
+        if (val !== null) dst.value = val;
+      }
+    }
+    return { matched: matched, total: total, nextRow: outRow };
+  }
+
+  /*
+   * 好幾份 MPS 報表篩選後合成一張表。
+   *   parts   [{ ws, values, keepCols, lastRow }]，依順序往下接
+   *   common  { dataStartRow, selectorCol }（每份報表的版面一樣）
+   * 表頭（含合併儲存格、行寬、凍結窗格、列印設定）用第一份報表的；
+   * 之後每份報表符合條件的列，直接接在前一份的最後一列下面。
+   * 每份報表保留的行數要一樣（第 n 個保留的行放到新檔的第 n 行）。
+   * 每份報表最後一列加紫色粗下框線（#9000FF）。
+   * 回傳和 filter() 一樣，另外多 parts: [{ matched, total, firstRow, lastRow }]
+   */
+  function filterMany(parts, common) {
+    function optsOf(p) {
+      return {
+        dataStartRow: common.dataStartRow, selectorCol: common.selectorCol,
+        values: p.values, keepCols: p.keepCols, lastRow: p.lastRow
+      };
+    }
+    var res = filter(parts[0].ws, optsOf(parts[0]));
+    var info = [{ matched: res.matchedRows, total: res.totalRows, firstRow: res.headerEnd + 1, lastRow: res.lastRow }];
+    var next = res.lastRow + 1;
+    for (var k = 1; k < parts.length; k++) {
+      var o = optsOf(parts[k]);
+      var add = appendFilteredRows(res.worksheet, next, parts[k].ws, o);
+      info.push({ matched: add.matched, total: add.total, firstRow: next, lastRow: add.nextRow - 1 });
+      res.matchedRows += add.matched;
+      res.totalRows += add.total;
+      next = add.nextRow;
+    }
+    res.lastRow = next - 1;
+    res.parts = info;
+    markPartEnds(res.worksheet, info, res.colCount);
+    return res;
+  }
+
+  // 每份報表最後一列的下框線：紫色粗線（#9000FF），一眼看出哪裡換下一份報表。
+  // 報表裡原本的粗下框線（例如原報表最後一列的黑粗線）落在中間的列時拿掉，只留每份報表的分界。
+  var PART_END_BORDER = { style: 'medium', color: { argb: 'FF9000FF' } };
+  function isThickLine(b) { return !!(b && (b.style === 'medium' || b.style === 'thick')); }
+  function markPartEnds(ws, parts, colCount) {
+    parts.forEach(function (p) {
+      if (!p.matched) return;
+      for (var r = p.firstRow; r <= p.lastRow; r++) {
+        for (var c = 1; c <= colCount; c++) {
+          var cell = ws.getCell(r, c);
+          var border = Object.assign({}, cell.style && cell.style.border);
+          if (r === p.lastRow) border.bottom = PART_END_BORDER;
+          else if (isThickLine(border.bottom)) delete border.bottom;
+          else continue;
+          cell.style = Object.assign({}, cell.style, { border: border });
+        }
+      }
+    });
   }
 
   /* ---------- 把整張工作表複製到另一個活頁簿 ---------- */
@@ -2543,6 +2610,7 @@
     inspect: inspect,
     extent: extent,
     filter: filter,
+    filterMany: filterMany,
     copySheet: copySheet,
     guessHeaderRow: guessHeaderRow,
     columnLabels: columnLabels,
