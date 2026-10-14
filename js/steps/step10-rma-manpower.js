@@ -15,10 +15,10 @@
  *     MPS (PCS)       第 7 步 RMA 各項目當月數量的合計，例如 =120+300
  *                     （數量從 MPS 工作表 RMA 區塊的公式 =120*L81 讀出來）
  *     需求工時         ='MPS'!N80（RMA總需求工時那一列）
- *     平日工作天數     ='總表'!D8（第 9 步輸入的）
- *     工作時間         ='總表'!D10
- *     綜合效率%       ='總表'!D13（Non-Top 3 機種）
- *     出勤率%         ='總表'!D14
+ *     平日工作天數     ='總表'!D12（第 9 步輸入的）
+ *     工作時間         ='總表'!D14
+ *     綜合效率%       ='總表'!D18（綜合效率% - 重工）
+ *     出勤率%         ='總表'!D19
  *     需求人力 On line  =D6/(D7+D8)/(D9+D10)/D11/D12，顯示到小數點第二位
  *   其他列之後再補。
  *
@@ -95,7 +95,7 @@
   var FROM_REPORT = [
     { key: 'weekdays', report: 'weekdays', label: '平日工作天數' },
     { key: 'workMinutes', report: 'workMinutes', label: '工作時間' },
-    { key: 'efficiency', report: 'effNonTop3', label: '綜合效率%（Non-Top 3 機種）' },
+    { key: 'efficiency', report: 'effRework', label: '綜合效率% - 重工' },
     { key: 'attendance', report: 'attendance', label: '出勤率%' }
   ];
 

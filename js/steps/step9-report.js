@@ -1,50 +1,49 @@
 /*
  * 第 9 步：總表
- *   在活頁簿裡新增「總表」工作表。目前先建立表格的樣式、格式、外框格線和位置，
- *   各格的內容（公式）之後再一項一項補上。
+ *   在活頁簿裡新增「總表」工作表。
  *
- *   版面（B 到 J 行、第 2 到 24 列）：
- *     第 2 列      法定加班上限46hr/人（紅底白字）
- *     第 3 列      表頭：B、C 合併畫斜線；D 到 I 是六個月；J 是備註（深藍底白字）
- *     第 4 列      MPS (Production)
- *     第 5–14 列   需求工時、工作天數、工作時間、加班時間、綜合效率、出勤率
- *     第 15–18 列  需求人力（On line、Off line_直接、Off line_間接、小計）
- *     第 19–22 列  現有人力（早+夜）（同上，小計(on+off)）
- *     第 23 列     人力需求差異(現有-需求)
- *     第 24 列     Loading Rate%(含加班)
+ *   版面（B 到 J 行、第 2 到 28 列）：
+ *     第 2 列      大標題（B 到 J 合併，預設「製二課 (車用/光機)」，畫面上可以改）
+ *     第 4 列      法定加班上限46hr/人（紅底白字，B、C 合併）
+ *     第 5 列      表頭：B、C 合併畫斜線；D 到 I 是六個月；J 是備註（深藍底白字）
+ *     第 6–8 列    MPS(PCS)：量產、試產、RMA（淺藍底）
+ *     第 9–11 列   需求工時-量產、需求工時-試產、需求工時-重工（min/月）
+ *     第 12–15 列  平日工作天數、假日工作天數、工作時間、加班時間
+ *     第 16–19 列  綜合效率% - 量產、- 試產、- 重工、出勤率%
+ *     第 20–23 列  需求人力：On line、新機種+重工、Off line(20%)、TTL（淺綠底）
+ *     第 24–26 列  現有人力：On line、Off line、TTL（淺綠底）
+ *     第 27 列     人力需求差異(現有-需求)
+ *     第 28 列     Loading Rate%(含加班)（淺橘底）
  *
  *   月份表頭用公式參照 MPS 工作表「需求工時」的月份（第 5 步輸入的），例如 ='MPS'!N3。
  *
- *   已經填好的列（都是公式，參照 MPS 工作表；用標籤文字找出是哪一列）：
- *     MPS (Production)      ← 第 2 步匯總的「Total」那一列（當月已含 WIP），例如 ='MPS'!E76
- *     需求工時(Top 3)        ← 「Top 3 總需求工時」那一列，例如 ='MPS'!N77
- *     需求工時(Non-Top 3)    ← 「Others 總需求工時」那一列
- *     需求工時（重工）        ← 「RMA總需求工時」那一列
+ *   從 MPS 工作表抓的列（都是公式；用標籤文字找出是哪一列）：
+ *     MPS(PCS) 量產、試產    ← 第 2 步匯總的「量產」「試產」那一列（當月已含 WIP）
+ *     MPS(PCS) RMA          ← 第 7 步 RMA 各項目數量的合計，例如 =120+300
+ *     需求工時-量產、-試產   ← 第 6 步「量產總需求工時」「試產總需求工時」
+ *     需求工時-重工         ← 第 7 步「RMA總需求工時」
  *
  *   使用者在畫面上輸入的列：
  *     平日工作天數     各月自己輸入（每個月不同，不記住）
  *     工作時間         各月自己輸入，預設 480 分
  *     加班時間         輸入每日加班幾小時、加班出勤人數 %，填公式 =2*60*80%，備註寫輸入的數值
- *   由輸入算出來的列：
- *     假日工作天數     =(46-D8*2)/8（法定加班上限 46 小時 − 平日天數 × 每天加班 2 小時）÷ 每天 8 小時
- *     綜合效率%（Top-3 機種）、綜合效率%（Non-Top 3 機種）、出勤率%   各月自己輸入，預設 80%、95%、95%
- *   工作時間、效率、出勤率、加班的兩個數字會記在這台電腦的瀏覽器裡，下次打開還是上次輸入的值。
- *     需求人力 Off line_直接   輸入文書、物料、材製損、包裝、領班的人數（每個月一樣），填公式 =2+3+1+4+1，備註寫各種人數
- *     需求人力 Off line_間接   輸入物料、領班的人數，同上
+ *     綜合效率% 量產、試產、重工，出勤率%   各月自己輸入，預設 80%、95%、95%、95%
+ *   工作時間、效率、出勤率、加班的兩個數字、大標題會記在這台電腦的瀏覽器裡。
  *   算出來的列：
- *     需求人力 On line   =D5/(D8+D9)/(D10+D11)/D12/D14+D6/(D8+D9)/(D10+D11)/D13/D14+D7/D8/D10/D13/D14
- *     需求人力 小計      =D15+D16（On line + Off line_直接，不含 Off line_間接，備註有寫）
+ *     假日工作天數     =(46-D12*2)/8
+ *     需求人力 On line      =D9/(D12+D13)/(D14+D15)/D16/D19                         量產
+ *     需求人力 新機種+重工   =D10/(D12+D13)/(D14+D15)/D17/D19+D11/D12/D14/D18/D19     試產 + 重工（重工不排假日、不加班）
+ *     需求人力 Off line(20%) =(D20+D21)*20%
+ *     需求人力 TTL          =D20+D21+D22
  *   從「人力」工作表抓的列（第 8 步確認的列和當月那一行，例如 ='人力'!D4）：
- *     現有人力 On line、Off line_直接、Off line_間接
- *     現有人力 小計(on+off)  =D19+D20（不含 Off line_間接，備註有寫）
- *   上傳第 8 步的檔案時，用第 8 步上次確認、記在瀏覽器裡的位置。
+ *     現有人力 On line ← Online；Off line ← Off line（直接）
+ *     現有人力 TTL     =D24+D25
  *   最後兩列：
- *     人力需求差異(現有-需求)   =D22-D18
- *     Loading Rate%(含加班)     =D22/D18（顯示成 %）
+ *     人力需求差異(現有-需求)   =D26-D23
+ *     Loading Rate%(含加班)     =D26/D23（顯示成 %）
  *
- *   第二張表（第 24 列下面空三列，第 28 到 50 列）：和第一張一樣，紅色格子寫「YO加班上限78hr/人」，
- *   假日工作天數改成 =(78-D34*2)/8。78 可以在畫面上改（會記住），紅色格子和公式一起變。
- *   其他輸入和抓來的數值都參照第一張表（例如 D34 =D8），需求人力、差異、Loading Rate 用第二張表自己的數字算。
+ *   第二張表（第 28 列下面空三列，第 32 到 56 列）：和第一張一樣，紅色格子寫「YO加班上限78hr/人」，
+ *   假日工作天數改用 78。78 可以在畫面上改（會記住）。其他輸入和抓來的數值都參照第一張表。
  *
  *   來源有兩種：
  *     a. 剛才第 8 步做好的結果（不用先匯出，直接沿用）
@@ -68,17 +67,12 @@
   var STORE_KEY = IEApp.storeKey('report');
   var MONTHS = XIO.REPORT.months;
   var DEFAULT_WORK_MINUTES = '480';
-  // 需求人力 Off line 的兩組人數（人員種類在 excel-io.js 的 REPORT_OFFLINE）
-  var OFFLINE = [
-    { key: 'offDirect', label: '需求人力 Off line_直接' },
-    { key: 'offIndirect', label: '需求人力 Off line_間接' }
-  ];
 
   var S = {
     upload: null,         // 上傳的第 8 步檔案 { name, buffer, sheets }
     preferUpload: false,
     work: null,           // 拿來預覽的活頁簿 { src, loading, error, wb, main }
-    inputs: null          // 輸入框裡的文字 { weekdays: [6], workMinutes: [6], effTop3: [6], effNonTop3: [6], attendance: [6], otHours, otRate }
+    inputs: null          // 輸入框裡的文字 { title, weekdays: [6], workMinutes: [6], effMass: [6], effTrial: [6], effRework: [6], attendance: [6], otHours, otRate, yoLimit }
   };
   var els = {};
   var timer = null;
@@ -88,8 +82,9 @@
   // 各月自己輸入、會記住上次的值的列（percent: 輸入的是 %，例如 80 代表 80%）
   var REMEMBERED = [
     { key: 'workMinutes', label: '工作時間（分/天）', what: '工作時間', def: DEFAULT_WORK_MINUTES },
-    { key: 'effTop3', label: '綜合效率%（Top-3 機種）', what: '綜合效率%（Top-3 機種）', def: '80', percent: true },
-    { key: 'effNonTop3', label: '綜合效率%（Non-Top 3 機種）', what: '綜合效率%（Non-Top 3 機種）', def: '95', percent: true },
+    { key: 'effMass', label: '綜合效率% - 量產', what: '綜合效率% - 量產', def: '80', percent: true },
+    { key: 'effTrial', label: '綜合效率% - 試產', what: '綜合效率% - 試產', def: '95', percent: true },
+    { key: 'effRework', label: '綜合效率% - 重工', what: '綜合效率% - 重工', def: '95', percent: true },
     { key: 'attendance', label: '出勤率%', what: '出勤率%', def: '95', percent: true }
   ];
 
@@ -97,15 +92,12 @@
     var s = {};
     try { s = JSON.parse(localStorage.getItem(STORE_KEY) || '{}') || {}; } catch (e) { s = {}; }
     var out = {
+      title: s.title === undefined || s.title === null ? XIO.REPORT_TITLE_DEFAULT : String(s.title),
       weekdays: blank6(''),
       otHours: s.otHours === undefined ? '' : String(s.otHours),
       otRate: s.otRate === undefined ? '' : String(s.otRate),
       yoLimit: s.yoLimit === undefined || s.yoLimit === '' ? String(XIO.YO_LIMIT_DEFAULT) : String(s.yoLimit)
     };
-    OFFLINE.forEach(function (g) {
-      var saved = Array.isArray(s[g.key]) ? s[g.key] : [];
-      out[g.key] = XIO.REPORT_OFFLINE[g.key].map(function (c, i) { return saved[i] === undefined || saved[i] === null ? '' : String(saved[i]); });
-    });
     REMEMBERED.forEach(function (row) {
       var saved = Array.isArray(s[row.key]) ? s[row.key].slice(0, MONTHS) : [];
       while (saved.length < MONTHS) saved.push(row.def);
@@ -115,7 +107,7 @@
   }
   function saveInputs() {
     var i = S.inputs;
-    var keep = { otHours: i.otHours, otRate: i.otRate, offDirect: i.offDirect, offIndirect: i.offIndirect, yoLimit: i.yoLimit };
+    var keep = { title: i.title, otHours: i.otHours, otRate: i.otRate, yoLimit: i.yoLimit };
     REMEMBERED.forEach(function (row) { keep[row.key] = i[row.key]; });
     try { localStorage.setItem(STORE_KEY, JSON.stringify(keep)); } catch (e) { /* 存不了就算了 */ }
   }
@@ -143,9 +135,6 @@
       out.otRate = num(i.otRate, '加班出勤人數 %', true);
       out.yoLimit = num(i.yoLimit, 'YO 加班上限');
       if (out.yoLimit === null) throw new Error('請輸入 YO 加班上限（小時）。');
-      OFFLINE.forEach(function (g) {
-        out[g.key] = XIO.REPORT_OFFLINE[g.key].map(function (c, k) { return num(i[g.key][k], g.label + '的' + c + '人數'); });
-      });
     } catch (e) {
       return { error: e.message };
     }
@@ -156,10 +145,8 @@
       if (miss) blanks.push('有 ' + miss + ' 個月沒有' + row.what + '。');
     });
     if (out.otHours === null || out.otRate === null) blanks.push('每日加班小時和加班出勤人數 % 都輸入後，才會填加班時間。');
-    OFFLINE.forEach(function (g) {
-      if (!out[g.key].some(function (v) { return v !== null; })) blanks.push(g.label + '還沒輸入人數，這一列先留空白。');
-    });
-    if (missWd) blanks.push('平日工作天數沒填的月份，需求人力 On line 會是 #DIV/0!。');
+    if (missWd) blanks.push('平日工作天數沒填的月份，需求人力會是 #DIV/0!。');
+    out.title = String(i.title || '').trim() || XIO.REPORT_TITLE_DEFAULT;
     return { values: out, blanks: blanks };
   }
 
@@ -221,8 +208,7 @@
   var MP_STORE_KEY = IEApp.storeKey('manpower');
   var MP_LINKS = [
     { key: 'haveOnline', item: 'online', label: 'Online' },
-    { key: 'haveOffDirect', item: 'offDirect', label: 'Off line（直接）' },
-    { key: 'haveOffIndirect', item: 'offIndirect', label: 'Off line（間接）' }
+    { key: 'haveOffline', item: 'offDirect', label: 'Off line（直接）' }
   ];
 
   // 第 8 步確認的位置：剛做完第 8 步就用它的；上傳的檔案用第 8 步記在瀏覽器裡的位置
@@ -305,7 +291,7 @@
 
     panel.appendChild(h('div', { class: 'step-head' },
       h('h1', { text: '總表' }),
-      h('p', { text: '在同一個檔案裡新增「總表」工作表，用公式從 MPS、人力工作表抓產量、需求工時和現有人力，加上畫面上輸入的天數、工時、效率、出勤率和 Off line 人數，算出需求人力、人力差異和 Loading Rate。' })));
+      h('p', { text: '在同一個檔案裡新增「總表」工作表，用公式從 MPS、人力工作表抓量產／試產／RMA 的產量、需求工時和現有人力，加上畫面上輸入的天數、工時、效率和出勤率，算出需求人力、人力差異和 Loading Rate。' })));
 
     panel.appendChild(h('ol', { class: 'tasks' },
       h('li', { class: 'task' },
@@ -315,7 +301,7 @@
         els.srcMsg),
       h('li', { class: 'task' },
         h('h2', { text: '輸入各月的數值' }),
-        h('p', { class: 'hint', text: '平日工作天數每個月都要輸入；工作時間預設 480 分，綜合效率預設 80%（Top-3）、95%（Non-Top 3），出勤率預設 95%，會記住上次輸入的值。假日工作天數會用公式自動算：（法定加班上限 46 小時 − 平日工作天數 × 每天加班 2 小時）÷ 8。加班時間 = 每日加班小時 × 60 × 加班出勤人數 %。Off line 的人數每個月一樣，會加總填入，各種人數寫在備註。' }),
+        h('p', { class: 'hint', text: '平日工作天數每個月都要輸入；工作時間預設 480 分，綜合效率預設 80%（量產）、95%（試產）、95%（重工），出勤率預設 95%，會記住上次輸入的值。假日工作天數會用公式自動算：（法定加班上限 46 小時 − 平日工作天數 × 每天加班 2 小時）÷ 8。加班時間 = 每日加班小時 × 60 × 加班出勤人數 %。需求人力 Off line =（On line + 新機種+重工）× 20%。' }),
         els.entry),
       h('li', { class: 'task' },
         h('h2', { text: '總表' }),
@@ -337,6 +323,13 @@
 
   function buildEntry() {
     var inp = S.inputs;
+    els.entry.appendChild(h('div', { class: 'field-row', style: 'margin-bottom:0.75rem' },
+      h('label', { for: 'f9-title', text: '總表大標題' }),
+      (function () {
+        var el = h('input', { id: 'f9-title', type: 'text', class: 'in in-wide', autocomplete: 'off', value: inp.title });
+        el.addEventListener('input', function () { inp.title = el.value; onType(); });
+        return el;
+      })()));
     var head = h('tr', null, h('th', { scope: 'col', text: '項目' }));
     for (var m = 0; m < MONTHS; m++) {
       var th = h('th', { scope: 'col', text: monthName(m) });
@@ -366,18 +359,6 @@
       (function () { var el = input(inp.yoLimit, 'YO 加班上限幾小時', function (v) { inp.yoLimit = v; }, 'in-tiny'); el.id = 'f9-yo-limit'; return el; })(),
       h('span', { text: '小時/人（預設 ' + XIO.YO_LIMIT_DEFAULT + '）' })));
 
-    // 需求人力 Off line：各種人員的人數（每個月一樣）
-    OFFLINE.forEach(function (g) {
-      var row = h('div', { class: 'field-row entry-ot' }, h('span', { class: 'field-label', text: g.label + '：' }));
-      XIO.REPORT_OFFLINE[g.key].forEach(function (cat, k) {
-        var id = 'f9-' + g.key + '-' + k;
-        var el = input(inp[g.key][k], g.label + ' ' + cat + ' 人數', function (v) { inp[g.key][k] = v; }, 'in-tiny');
-        el.id = id;
-        row.appendChild(h('label', { for: id, class: 'entry-cat', text: cat }));
-        row.appendChild(el);
-      });
-      els.entry.appendChild(row);
-    });
   }
 
   function onType() {
@@ -427,6 +408,7 @@
       var refs = monthRefs(main, src);
       work.refs = refs;
       work.links = XIO.findReportLinks(main, { dataStartRow: dataStartRow(src), months: XIO.REPORT.months });
+      work.rma = XIO.readRmaQuantities(main, work.links.hoursRework);
       var mp = manpowerLinks(wb, src);
       Object.keys(mp).forEach(function (k) { work.links[k] = mp[k]; });
       work.wb = wb;
@@ -478,18 +460,19 @@
     var read = readInputs();
     if (read.error) { setSummary(read.error, true); return; }
     // 每次都照目前的輸入重新產生總表（給預覽用）
-    work.report = XIO.addReportSheet(work.wb, { monthRefs: work.refs || [], links: linkRefs(work.links), inputs: read.values, yoLimit: read.values.yoLimit });
+    work.report = XIO.addReportSheet(work.wb, { title: read.values.title, monthRefs: work.refs || [], links: linkRefs(work.links),
+      rmaQty: work.rma.qty, inputs: read.values, yoLimit: read.values.yoLimit });
     var ws = work.report.worksheet;
     var names = work.wb.worksheets.map(function (w) { return w.name; });
     var replacing = src.kind === 'file' && S.upload.sheets.some(function (n) { return sameName(n, SHEET_NAME); });
     var text = '匯出的檔案有 ' + names.length + ' 個工作表：' + names.join('、') + '。「' + SHEET_NAME +
-      '」有兩張表：上面是法定加班上限 46hr，下面（第 28 列起）是 YO 加班上限 ' + read.values.yoLimit + 'hr。';
+      '」有兩張表：上面是法定加班上限 46hr，下面（第 ' + (XIO.REPORT.noteRow + XIO.REPORT_SECOND_OFFSET) + ' 列起）是 YO 加班上限 ' + read.values.yoLimit + 'hr。';
     if (replacing) text += ' 檔案裡原本的「' + SHEET_NAME + '」工作表會重新建立。';
     setSummary(text, false, replacing);
 
     if (work.refs && work.refs.length) {
       var r0 = work.refs[0];
-      els.notes.appendChild(h('li', null, '月份表頭參照 ' + work.main.name + ' 工作表「需求工時」的月份，例如 D3 ＝ ' +
+      els.notes.appendChild(h('li', null, '月份表頭參照 ' + work.main.name + ' 工作表「需求工時」的月份，例如 D' + XIO.REPORT.headRow + ' ＝ ' +
         "='" + r0.sheet + "'!" + XIO.numToCol(r0.col) + r0.row + '（' + work.refs.map(function (r) { return r.text || '空白'; }).join('、') + '）。'));
     } else {
       els.notes.appendChild(h('li', { class: 'is-warn' },
@@ -512,6 +495,7 @@
     var refs = work.refs || [];
     var links = linkRefs(work.links);
     var inputs = read.values;
+    var rmaQty = work.rma.qty;
     IEApp.state.withReport = {
       outName: outputName(src),
       mainSheet: work.main.name,
@@ -520,7 +504,7 @@
       monthCol: work.report.monthCol,
       monthCount: work.report.months,
       inputs: inputs,
-      build: function () { return buildWorkbook(src, refs, links, inputs); }
+      build: function () { return buildWorkbook(src, refs, links, rmaQty, inputs); }
     };
     els.nextBtn.disabled = false;
   }
@@ -529,7 +513,12 @@
   function renderLinks(work) {
     var months = XIO.REPORT.months;
     var rowLabel = {};
-    XIO.REPORT_ROWS.forEach(function (d) { rowLabel[d.key] = d.label || d.unit; });
+    var group = '';
+    XIO.REPORT_ROWS.forEach(function (d) {
+      if (d.group) group = d.group;
+      if (d.label) group = '';
+      rowLabel[d.key] = d.label || ((d.group || group) === 'MPS(PCS)' ? 'MPS(PCS) ' + d.unit : d.unit);
+    });
     var warn = false;
 
     var head = h('tr', null,
@@ -588,7 +577,28 @@
       body.appendChild(tr);
     });
 
-    var ex = work.links.section.found && work.links.section.refs[0];
+    // MPS(PCS) RMA：第 7 步各項目數量的合計
+    (function () {
+      var q = work.rma;
+      var tr = h('tr', null,
+        h('th', { class: 'rowhead', scope: 'row', text: rowLabel.mpsRma }),
+        h('td', { text: q.items.length ? 'RMA 項目（' + q.items.join('、') + '）的數量合計' : '找不到 RMA 項目' }));
+      for (var m = 0; m < months; m++) {
+        var list = q.qty[m] || [];
+        tr.appendChild(h('td', { class: list.length ? 'is-num' : 'is-missing',
+          text: list.length ? list.reduce(function (a, b) { return a + b; }, 0).toLocaleString('en-US') : '' }));
+      }
+      body.insertBefore(tr, body.children[2] || null);
+      if (!q.items.length) {
+        warn = true;
+        els.notes.appendChild(h('li', { class: 'is-warn' }, 'MPS(PCS) RMA：MPS 工作表裡找不到 RMA 項目（第 7 步），這一列先留空白。'));
+      } else if (q.bad) {
+        warn = true;
+        els.notes.appendChild(h('li', { class: 'is-warn' }, 'RMA 區塊有 ' + q.bad + ' 格的公式不是「數量*CT.」的樣子，那幾格沒有算進 MPS(PCS) RMA。'));
+      }
+    })();
+
+    var ex = work.links.mpsMass.found && work.links.mpsMass.refs[0];
     els.result.textContent = '';
     els.result.appendChild(h('p', { class: 'sheet-caption', text: '從其他工作表抓的列（需求工時只顯示整數）：' }));
     els.result.appendChild(h('div', { class: 'sheet-scroll', tabindex: '0', role: 'group', 'aria-label': '總表已填的列' },
@@ -606,9 +616,9 @@
   }
 
   /* ---------- 產生活頁簿 ---------- */
-  function buildWorkbook(src, refs, links, inputs) {
+  function buildWorkbook(src, refs, links, rmaQty, inputs) {
     return buildFrom(src).then(function (wb) {
-      XIO.addReportSheet(wb, { monthRefs: refs, links: links, inputs: inputs, yoLimit: inputs.yoLimit });
+      XIO.addReportSheet(wb, { title: inputs.title, monthRefs: refs, links: links, rmaQty: rmaQty, inputs: inputs, yoLimit: inputs.yoLimit });
       return wb;
     });
   }

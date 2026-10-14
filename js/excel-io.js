@@ -2005,71 +2005,76 @@
     monthCol: 4,           // D：第一個月
     months: 6,             // D 到 I
     noteCol: 10,           // J：備註
-    noteRow: 2,            // 第 2 列：法定加班上限
-    headRow: 3,            // 第 3 列：月份表頭
-    lastRow: 24
+    titleRow: 2,           // 第 2 列：大標題（例如「製二課 (車用/光機)」，B 到 J 合併）
+    noteRow: 4,            // 第 4 列：法定加班上限
+    headRow: 5,            // 第 5 列：月份表頭
+    lastRow: 28
   };
+  var REPORT_TITLE_DEFAULT = '製二課 (車用/光機)';
   var REPORT_FONT = '微軟正黑體';
   var OVERTIME_LIMIT = 46;     // 法定加班上限（小時/人/月）
   var WEEKDAY_OT_HOURS = 2;    // 平日每天加班 2 小時
   var DAY_HOURS = 8;           // 一天工作 8 小時
+  var OFFLINE_RATE = 20;       // 需求人力 Off line =（On line + 新機種+重工）× 20%
   var YO_LIMIT_DEFAULT = 78;   // 第二張表：YO 加班上限（小時/人/月），畫面上可以改
-  var REPORT_SECOND_OFFSET = 26;   // 第二張表在第一張下面空三列（第一張是第 2–24 列，第二張從第 28 列開始）
+  var REPORT_SECOND_OFFSET = 28;   // 第二張表在第一張下面空三列（第一張到第 28 列，第二張的紅色格子在第 32 列）
   // 第二張表直接參照第一張表的列（其他列是第二張表自己算）
-  var REPORT_SECOND_COPY = ['section', 'hoursTop3', 'hoursNonTop3', 'hoursRework', 'weekdays', 'workMinutes',
-    'overtimeMinutes', 'effTop3', 'effNonTop3', 'attendance', 'needOffDirect', 'needOffIndirect',
-    'haveOnline', 'haveOffDirect', 'haveOffIndirect'];
-  // 需求人力 Off line 的人員種類（之後要增減種類改這裡）
-  var REPORT_OFFLINE = {
-    offDirect: ['文書', '物料', '材製損', '包裝', '領班'],
-    offIndirect: ['物料', '領班']
-  };
+  var REPORT_SECOND_COPY = ['mpsMass', 'mpsTrial', 'mpsRma', 'hoursMass', 'hoursTrial', 'hoursRework',
+    'weekdays', 'workMinutes', 'overtimeMinutes', 'effMass', 'effTrial', 'effRework', 'attendance',
+    'haveOnline', 'haveOffline'];
   function isNum(v) { return typeof v === 'number' && !isNaN(v); }
   var REPORT_COLOR = {
     red: 'FFFF0000',       // 法定加班上限
     head: 'FF366092',      // 表頭深藍
-    section: 'FFDCE6F1',   // MPS (Production) 那一列
-    subtotal: 'FFEBF1DE',  // 小計
+    section: 'FFDCE6F1',   // MPS(PCS) 那三列
+    subtotal: 'FFEBF1DE',  // TTL
     loading: 'FFFFCC99',   // Loading Rate
-    navy: 'FF000080',      // 人力相關的字
+    blue: 'FF4472C4',      // 總表人力相關的字
+    navy: 'FF000080',      // RMA人力需求表的字
     white: 'FFFFFFFF'
   };
-  // 每一列：key 給之後填內容用；label 在 B，unit 在 C；merge = B、C 合併
+  /*
+   * 每一列：key 給之後填內容用；label 在 B，unit 在 C；merge = B、C 合併；
+   * group = 這一組在 B 行的文字（B 行往下合併到這一組的最後一列）；
+   * plain = B 行的字不加粗；blue = 藍色字；section / subtotal / loading = 底色；height = 列高
+   */
   var REPORT_ROWS = [
-    { row: 4, key: 'section', label: 'MPS (Production)', merge: true, section: true },
-    { row: 5, key: 'hoursTop3', label: '需求工時(Top 3)', unit: 'min/月' },
-    { row: 6, key: 'hoursNonTop3', label: '需求工時(Non-Top 3)', unit: 'min/月' },
-    { row: 7, key: 'hoursRework', label: '需求工時（重工）', unit: 'min/月' },
-    { row: 8, key: 'weekdays', label: '平日工作天數', unit: '天/月' },
-    { row: 9, key: 'holidays', label: '假日工作天數', unit: '天/月' },
-    { row: 10, key: 'workMinutes', label: '工作時間', unit: '分/天' },
-    { row: 11, key: 'overtimeMinutes', label: '加班時間', unit: '分/天' },
-    { row: 12, key: 'effTop3', label: '綜合效率%（Top-3 機種）', merge: true },
-    { row: 13, key: 'effNonTop3', label: '綜合效率%（Non-Top 3 機種）', merge: true },
-    { row: 14, key: 'attendance', label: '出勤率%', merge: true },
-    { row: 15, key: 'needOnline', group: '需求人力', unit: 'On line', navy: true },
-    { row: 16, key: 'needOffDirect', unit: 'Off line_直接', navy: true },
-    { row: 17, key: 'needOffIndirect', unit: 'Off line_間接', navy: true },
-    { row: 18, key: 'needSubtotal', unit: '小計', navy: true, subtotal: true },
-    { row: 19, key: 'haveOnline', group: '現有人力\n(早+夜)', unit: 'On line', navy: true },
-    { row: 20, key: 'haveOffDirect', unit: 'Off line_直接', navy: true },
-    { row: 21, key: 'haveOffIndirect', unit: 'Off line_間接', navy: true },
-    { row: 22, key: 'haveSubtotal', unit: '小計(on+off)', navy: true, subtotal: true },
-    { row: 23, key: 'gap', label: '人力需求差異(現有-需求)', merge: true, navy: true },
-    { row: 24, key: 'loading', label: 'Loading Rate%(含加班)', merge: true, navy: true, loading: true }
+    { row: 6, key: 'mpsMass', group: 'MPS(PCS)', unit: '量產', section: true },
+    { row: 7, key: 'mpsTrial', unit: '試產', section: true },
+    { row: 8, key: 'mpsRma', unit: 'RMA', section: true },
+    { row: 9, key: 'hoursMass', label: '需求工時-量產', unit: 'min/月', plain: true },
+    { row: 10, key: 'hoursTrial', label: '需求工時-試產', unit: 'min/月', plain: true },
+    { row: 11, key: 'hoursRework', label: '需求工時-重工', unit: 'min/月', plain: true },
+    { row: 12, key: 'weekdays', label: '平日工作天數', unit: '天/月', plain: true },
+    { row: 13, key: 'holidays', label: '假日工作天數', unit: '天/月', plain: true },
+    { row: 14, key: 'workMinutes', label: '工作時間', unit: '分/天', plain: true },
+    { row: 15, key: 'overtimeMinutes', label: '加班時間', unit: '分/天', plain: true },
+    { row: 16, key: 'effMass', label: '綜合效率% - 量產', merge: true },
+    { row: 17, key: 'effTrial', label: '綜合效率% - 試產', merge: true },
+    { row: 18, key: 'effRework', label: '綜合效率% - 重工', merge: true },
+    { row: 19, key: 'attendance', label: '出勤率%', merge: true },
+    { row: 20, key: 'needOnline', group: '需求人力', unit: 'On line', blue: true, plain: true },
+    { row: 21, key: 'needNewRework', unit: '新機種+重工', blue: true, height: 36 },
+    { row: 22, key: 'needOffline', unit: 'Off line(' + OFFLINE_RATE + '%)', blue: true },
+    { row: 23, key: 'needTotal', unit: 'TTL', blue: true, subtotal: true },
+    { row: 24, key: 'haveOnline', group: '現有人力', unit: 'On line', blue: true, plain: true },
+    { row: 25, key: 'haveOffline', unit: 'Off line', blue: true },
+    { row: 26, key: 'haveTotal', unit: 'TTL', blue: true, subtotal: true },
+    { row: 27, key: 'gap', label: '人力需求差異(現有-需求)', merge: true, blue: true, thickTop: true },
+    { row: 28, key: 'loading', label: 'Loading Rate%(含加班)', merge: true, blue: true, loading: true }
   ];
 
   /*
    * 總表各列要從 MPS 工作表哪一列抓數值：用列的文字標籤找。
-   *   Total               第 2 步匯總（當月已含 WIP）
-   *   Top 3 總需求工時     第 6 步
-   *   Others 總需求工時    第 6 步
-   *   RMA總需求工時        第 7 步
+   *   量產、試產               第 2 步匯總（當月已含 WIP）
+   *   量產總需求工時、試產總需求工時   第 6 步
+   *   RMA總需求工時            第 7 步（MPS(PCS) 的 RMA 數量也從這一塊讀）
    */
   var REPORT_LINKS = [
-    { key: 'section', label: 'Total', step: 2 },
-    { key: 'hoursTop3', label: 'Top 3 總需求工時', step: 6 },
-    { key: 'hoursNonTop3', label: 'Others 總需求工時', step: 6 },
+    { key: 'mpsMass', label: '量產', step: 2 },
+    { key: 'mpsTrial', label: '試產', step: 2 },
+    { key: 'hoursMass', label: '量產總需求工時', step: 6 },
+    { key: 'hoursTrial', label: '試產總需求工時', step: 6 },
     { key: 'hoursRework', label: 'RMA總需求工時', step: 7 }
   ];
 
@@ -2123,21 +2128,20 @@
 
   /*
    * 在活頁簿裡建立「總表」工作表（已經有的話先刪掉重建）。
+   * o.title      第 2 列的大標題（預設「製二課 (車用/光機)」）
    * o.monthRefs  各月表頭要參照的儲存格 [{ sheet: 'MPS', col: 14, row: 3, text: 'Oct' }]；
    *              有給的話表頭填公式（例如 ='MPS'!N3），沒給的那幾格留空白
-   * o.links      各列要抓的儲存格 { section: [{ sheet, col, row, value }], hoursTop3: […], … }（findReportLinks 的 refs）；
+   * o.links      各列要抓的儲存格 { mpsMass: [{ sheet, col, row, value }], hoursMass: […], … }（findReportLinks 的 refs）；
    *              有給的話那一列的 D 到 I 填公式（例如 ='MPS'!E76）
+   * o.rmaQty     MPS(PCS) 的 RMA 那一列：各月 RMA 數量 [[120, 300], [80, 0], …]，填公式 =120+300
    * o.inputs     使用者在畫面上輸入的數值：
    *                weekdays     [6 個月的平日工作天數]（null = 沒填）
    *                workMinutes  [6 個月的工作時間（分/天）]
-   *                effTop3 / effNonTop3 / attendance   [6 個月的 %]（例如 80 代表 80%，存成 0.8）
+   *                effMass / effTrial / effRework / attendance   [6 個月的 %]（例如 80 代表 80%，存成 0.8）
    *                otHours      每日加班幾小時
    *                otRate       加班出勤人數 %（例如 80 代表 80%）
-   *                offDirect / offIndirect   各種人員的人數，順序同 REPORT_OFFLINE（null = 沒填）
-   * o.yoLimit    第二張表（第 28 列起）的 YO 加班上限，預設 78；第二張表的假日工作天數 =(78-D34*2)/8，
-   *              其他輸入和抓來的數值參照第一張表（例如 D34 =D8）
-   *              假日工作天數一律填公式 =(46-D8*2)/8；加班時間填公式 =2*60*80%（兩個數字都有才填），備註寫輸入的數值
-   * 回傳 { worksheet, rows: { hoursTop3: 5, … }, monthCol, months }
+   * o.yoLimit    第二張表（第 32 列起）的 YO 加班上限，預設 78
+   * 回傳 { worksheet, rows: { hoursMass: 9, … }, rows2, monthCol, months }
    */
   function addReportSheet(wb, o) {
     o = o || {};
@@ -2149,7 +2153,6 @@
     var C = REPORT_COLOR;
     var lastMonth = R.monthCol + R.months - 1;
     var THIN = { style: 'thin' }, THICK = { style: 'medium' };
-    var LEFT = { horizontal: 'left', vertical: 'middle' };
     var CENTER = { horizontal: 'center', vertical: 'middle' };
     var yoLimit = isNum(o.yoLimit) ? o.yoLimit : YO_LIMIT_DEFAULT;
     var OFF2 = REPORT_SECOND_OFFSET;                       // 第二張表往下移幾列
@@ -2160,46 +2163,60 @@
 
     // 行寬；表格外的空白格子也設成微軟正黑體，之後在旁邊打字字型才一致
     ws.getColumn(1).width = 6;
-    ws.getColumn(R.firstCol).width = 24;
-    ws.getColumn(R.unitCol).width = 17;    // 要放得下「Off line_直接」「小計(on+off)」，不然字會跑到 D 行
+    ws.getColumn(R.firstCol).width = 17;
+    ws.getColumn(R.unitCol).width = 15;
     for (var mc = R.monthCol; mc <= lastMonth; mc++) ws.getColumn(mc).width = 10;
-    ws.getColumn(R.noteCol).width = 56;
+    ws.getColumn(R.noteCol).width = 48;
     for (var fc = 1; fc <= R.noteCol + 1; fc++) ws.getColumn(fc).font = font();
     for (var fr = 1; fr <= bottom + 1; fr++) {
       for (fc = 1; fc <= R.noteCol + 1; fc++) ws.getCell(fr, fc).font = font();
     }
 
+    // 大標題：B 到 J 合併、置中、粗體，外框粗線
+    var title = o.title === undefined || o.title === null || o.title === '' ? REPORT_TITLE_DEFAULT : String(o.title);
+    ws.getRow(R.titleRow).height = 27;
+    for (var tc = R.firstCol; tc <= R.noteCol; tc++) {
+      ws.getCell(R.titleRow, tc).style = {
+        font: font({ size: 16, bold: true }), alignment: CENTER,
+        border: { top: THICK, bottom: THICK, left: tc === R.firstCol ? THICK : undefined, right: tc === R.noteCol ? THICK : undefined }
+      };
+    }
+    ws.getCell(R.titleRow, R.firstCol).value = title;
+    ws.mergeCellsWithoutStyle(R.titleRow, R.firstCol, R.titleRow, R.noteCol);
+
     /* ----- 畫一張表的外框、底色、標籤（off = 往下移幾列），回傳各列的列號 ----- */
-    function drawFrame(off, title) {
+    function drawFrame(off, label) {
       var noteRow = R.noteRow + off, headRow = R.headRow + off, lastRow = R.lastRow + off;
-      ws.getRow(noteRow).height = 24;
+      ws.getRow(noteRow).height = 21;
       ws.getRow(headRow).height = 21;
       for (var hr = headRow + 1; hr <= lastRow; hr++) ws.getRow(hr).height = 18;
+      var thickTop = {};
+      REPORT_ROWS.forEach(function (d) { if (d.thickTop) thickTop[d.row + off] = true; });
 
-      // 外框粗線、裡面細線；Loading Rate 那一列上面也是粗線
+      // 外框粗線、裡面細線；人力需求差異那一列上面也是粗線
       function border(r, c) {
         return {
-          top: r === headRow || r === lastRow ? THICK : THIN,
-          bottom: r === lastRow || r === lastRow - 1 ? THICK : THIN,
-          left: c === R.firstCol ? THICK : THIN,
-          right: c === R.noteCol ? THICK : THIN
+          top: r === headRow || thickTop[r] ? THICK : THIN,
+          bottom: r === headRow || r === lastRow || thickTop[r + 1] ? THICK : THIN,
+          left: c === R.firstCol || r === headRow ? THICK : THIN,
+          right: c === R.noteCol || r === headRow ? THICK : THIN
         };
       }
 
-      // 加班上限（紅底白字，B、C 合併）
-      ws.getCell(noteRow, R.firstCol).value = title;
-      ws.mergeCells(noteRow, R.firstCol, noteRow, R.unitCol);
+      // 加班上限（紅底白字置中，B、C 合併）
+      ws.getCell(noteRow, R.firstCol).value = label;
       ws.getCell(noteRow, R.firstCol).style = {
-        font: font({ bold: true, color: { argb: C.white } }), fill: solid(C.red), alignment: LEFT
+        font: font({ bold: true, color: { argb: C.white } }), fill: solid(C.red), alignment: CENTER
       };
       ws.getCell(noteRow, R.unitCol).style = { font: font(), fill: solid(C.red) };
+      ws.mergeCellsWithoutStyle(noteRow, R.firstCol, noteRow, R.unitCol);
 
       // 表頭（深藍底白字；B、C 合併，畫一條斜線）
       for (var c = R.firstCol; c <= R.noteCol; c++) {
         var b = border(headRow, c);
         if (c <= R.unitCol) b.diagonal = { up: false, down: true, style: 'medium', color: { argb: 'FF000000' } };
         ws.getCell(headRow, c).style = {
-          font: font({ size: 14, bold: true, color: { argb: C.white } }),
+          font: font({ size: c === R.noteCol ? 14 : 12, bold: c !== R.noteCol, color: { argb: C.white } }),
           fill: solid(C.head), alignment: CENTER, border: b
         };
       }
@@ -2212,28 +2229,30 @@
       REPORT_ROWS.forEach(function (d, k) {
         var r = d.row + off;
         rows[d.key] = r;
-        var fill = d.section ? solid(C.section) : d.loading ? solid(C.loading) : null;
-        var color = d.navy ? { argb: C.navy } : undefined;
+        if (d.height) ws.getRow(r).height = d.height;
+        var color = d.blue ? { argb: C.blue } : undefined;
         for (var c = R.firstCol; c <= R.noteCol; c++) {
-          var f = fill;
+          var f = d.section ? solid(C.section) : d.loading ? solid(C.loading) : null;
           if (d.subtotal && c >= R.unitCol) f = solid(C.subtotal);
-          var st = { border: border(r, c), alignment: c <= R.unitCol ? LEFT : CENTER, font: font({ color: color }) };
+          var st = { border: border(r, c), alignment: CENTER, font: font({ color: color }) };
+          if (c === R.firstCol) st.font = font({ bold: !d.plain, color: color });
+          if (c === R.unitCol) st.font = font({ bold: true, color: color });
+          if (c === R.noteCol) st.alignment = { horizontal: 'left', vertical: 'middle' };
           if (f) st.fill = f;
-          if (c <= R.unitCol) st.font = font({ bold: true, color: color, size: d.section ? 14 : 12 });
           ws.getCell(r, c).style = st;
         }
         if (d.label) ws.getCell(r, R.firstCol).value = d.label;
         if (d.unit) ws.getCell(r, R.unitCol).value = d.unit;
         if (d.merge) ws.mergeCellsWithoutStyle(r, R.firstCol, r, R.unitCol);
 
-        // 需求人力、現有人力：B 行往下合併到這一組的最後一列
+        // MPS(PCS)、需求人力、現有人力：B 行往下合併到這一組的最後一列
         if (d.group) {
           groupTop = r;
           var g = ws.getCell(r, R.firstCol);
           g.value = d.group;
           g.style = Object.assign({}, g.style, {
-            font: font({ color: color }),
-            alignment: { horizontal: 'left', vertical: 'middle', wrapText: true }
+            font: font({ bold: !!d.section, color: color }),
+            alignment: { horizontal: 'center', vertical: 'middle', wrapText: true }
           });
         }
         var nextRow = REPORT_ROWS[k + 1];
@@ -2258,7 +2277,6 @@
     function setNote(rows, key, text) {
       var c = ws.getCell(rows[key], R.noteCol);
       c.value = text;
-      c.alignment = { horizontal: 'left', vertical: 'middle' };
     }
 
     /* ----- 由其他列算出來的列（兩張表都一樣，只有加班上限不同） ----- */
@@ -2272,35 +2290,42 @@
           '(' + limit + '-' + a('weekdays') + '*' + WEEKDAY_OT_HOURS + ')/' + DAY_HOURS,
           (limit - n('weekdays') * WEEKDAY_OT_HOURS) / DAY_HOURS, '0.00');
 
-        // 需求人力 On line：
-        //   Top 3     需求工時 ÷（平日+假日天數）÷（工作時間+加班時間）÷ Top-3 效率 ÷ 出勤率
-        //   Non-Top 3 需求工時 ÷（平日+假日天數）÷（工作時間+加班時間）÷ Non-Top 3 效率 ÷ 出勤率
-        //   重工      需求工時 ÷ 平日天數 ÷ 工作時間 ÷ Non-Top 3 效率 ÷ 出勤率
         var days = '(' + a('weekdays') + '+' + a('holidays') + ')';
         var mins = '(' + a('workMinutes') + '+' + a('overtimeMinutes') + ')';
-        var f = a('hoursTop3') + '/' + days + '/' + mins + '/' + a('effTop3') + '/' + a('attendance') + '+' +
-          a('hoursNonTop3') + '/' + days + '/' + mins + '/' + a('effNonTop3') + '/' + a('attendance') + '+' +
-          a('hoursRework') + '/' + a('weekdays') + '/' + a('workMinutes') + '/' + a('effNonTop3') + '/' + a('attendance');
         var d = n('weekdays') + n('holidays');
         var t = n('workMinutes') + n('overtimeMinutes');
-        var res = n('hoursTop3') / d / t / n('effTop3') / n('attendance') +
-          n('hoursNonTop3') / d / t / n('effNonTop3') / n('attendance') +
-          n('hoursRework') / n('weekdays') / n('workMinutes') / n('effNonTop3') / n('attendance');
-        setFormula(cellOf(rows, 'needOnline', m), f, res, '#,##0.0');
 
-        // 需求人力小計 = On line + Off line_直接（不含 Off line_間接）
-        setFormula(cellOf(rows, 'needSubtotal', m), a('needOnline') + '+' + a('needOffDirect'),
-          n('needOnline') + n('needOffDirect'), '#,##0.0');
-        // 現有人力小計 = On line + Off line_直接（不含 Off line_間接）
-        setFormula(cellOf(rows, 'haveSubtotal', m), a('haveOnline') + '+' + a('haveOffDirect'),
-          n('haveOnline') + n('haveOffDirect'), 'General');
-        // 人力需求差異 = 現有人力小計 − 需求人力小計；Loading Rate = 現有人力小計 ÷ 需求人力小計
-        var hv = n('haveSubtotal'), nv = n('needSubtotal');
-        setFormula(cellOf(rows, 'gap', m), a('haveSubtotal') + '-' + a('needSubtotal'), hv - nv, '#,##0.0');
-        setFormula(cellOf(rows, 'loading', m), a('haveSubtotal') + '/' + a('needSubtotal'), nv ? hv / nv : NaN, '0%');
+        // 需求人力 On line（量產）= 需求工時-量產 ÷（平日+假日天數）÷（工作時間+加班時間）÷ 量產效率 ÷ 出勤率
+        setFormula(cellOf(rows, 'needOnline', m),
+          a('hoursMass') + '/' + days + '/' + mins + '/' + a('effMass') + '/' + a('attendance'),
+          n('hoursMass') / d / t / n('effMass') / n('attendance'), '#,##0.0');
+
+        // 新機種+重工：
+        //   試產 需求工時 ÷（平日+假日天數）÷（工作時間+加班時間）÷ 試產效率 ÷ 出勤率
+        //   重工 需求工時 ÷ 平日天數 ÷ 工作時間 ÷ 重工效率 ÷ 出勤率（重工不排假日、不加班）
+        setFormula(cellOf(rows, 'needNewRework', m),
+          a('hoursTrial') + '/' + days + '/' + mins + '/' + a('effTrial') + '/' + a('attendance') + '+' +
+          a('hoursRework') + '/' + a('weekdays') + '/' + a('workMinutes') + '/' + a('effRework') + '/' + a('attendance'),
+          n('hoursTrial') / d / t / n('effTrial') / n('attendance') +
+          n('hoursRework') / n('weekdays') / n('workMinutes') / n('effRework') / n('attendance'), '#,##0.0');
+
+        // Off line =（On line + 新機種+重工）× 20%
+        setFormula(cellOf(rows, 'needOffline', m),
+          '(' + a('needOnline') + '+' + a('needNewRework') + ')*' + OFFLINE_RATE + '%',
+          (n('needOnline') + n('needNewRework')) * OFFLINE_RATE / 100, '#,##0.0');
+
+        // TTL
+        setFormula(cellOf(rows, 'needTotal', m), a('needOnline') + '+' + a('needNewRework') + '+' + a('needOffline'),
+          n('needOnline') + n('needNewRework') + n('needOffline'), '#,##0.0');
+        setFormula(cellOf(rows, 'haveTotal', m), a('haveOnline') + '+' + a('haveOffline'),
+          n('haveOnline') + n('haveOffline'), 'General');
+
+        // 人力需求差異 = 現有 TTL − 需求 TTL；Loading Rate = 現有 TTL ÷ 需求 TTL
+        var hv = n('haveTotal'), nv = n('needTotal');
+        setFormula(cellOf(rows, 'gap', m), a('haveTotal') + '-' + a('needTotal'), hv - nv, '#,##0.0');
+        setFormula(cellOf(rows, 'loading', m), a('haveTotal') + '/' + a('needTotal'), nv ? hv / nv : NaN, '0%');
       }
-      setNote(rows, 'needSubtotal', '不含Off line_間接');
-      setNote(rows, 'haveSubtotal', '不含Off line_間接');
+      setNote(rows, 'needOffline', '(On line + 新機種+重工) × ' + OFFLINE_RATE + '%');
     }
 
     /* ===== 第一張表：法定加班上限 46 小時 ===== */
@@ -2331,6 +2356,13 @@
       });
     });
 
+    // MPS(PCS) 的 RMA：第 7 步各項目的數量相加，例如 =120+300
+    (o.rmaQty || []).slice(0, R.months).forEach(function (list, i) {
+      if (!list || !list.length) return;
+      var total = list.reduce(function (x, y) { return x + y; }, 0);
+      setFormula(cellOf(rows, 'mpsRma', i), list.join('+'), total, INTEGER_FORMAT);
+    });
+
     // 使用者輸入的列
     var inp = o.inputs || {};
     for (var m = 0; m < R.months; m++) {
@@ -2345,7 +2377,7 @@
         cellOf(rows, 'workMinutes', m).numFmt = INTEGER_FORMAT;
       }
       // 綜合效率、出勤率：輸入 80 存成 0.8，格式顯示成 80%
-      ['effTop3', 'effNonTop3', 'attendance'].forEach(function (key) {
+      ['effMass', 'effTrial', 'effRework', 'attendance'].forEach(function (key) {
         var v = inp[key] ? inp[key][m] : null;
         if (!isNum(v)) return;
         var pc = cellOf(rows, key, m);
@@ -2363,21 +2395,11 @@
         ' 小時 × 60 × 加班出勤人數 ' + (isNum(inp.otRate) ? inp.otRate : '?') + '%');
     }
 
-    // 需求人力 Off line_直接、Off line_間接：各種人員的人數相加（每個月一樣），備註寫各種人數
-    [['needOffDirect', 'offDirect'], ['needOffIndirect', 'offIndirect']].forEach(function (pair) {
-      var key = pair[0], cats = REPORT_OFFLINE[pair[1]], counts = inp[pair[1]] || [];
-      if (!counts.some(isNum)) return;
-      var nums = cats.map(function (c, i) { return isNum(counts[i]) ? counts[i] : 0; });
-      var total = nums.reduce(function (x, y) { return x + y; }, 0);
-      for (var m = 0; m < R.months; m++) setFormula(cellOf(rows, key, m), nums.join('+'), total, 'General');
-      setNote(rows, key, cats.map(function (c, i) { return c + ' ' + nums[i]; }).join('、'));
-    });
-
     fillComputed(rows, OVERTIME_LIMIT);
 
     /* ===== 第二張表：YO 加班上限（預設 78 小時，可在畫面上改） =====
      * 和第一張表一樣，只有假日工作天數改用 YO 的加班上限；
-     * 其他輸入、抓來的數值都參照第一張表（例如 =D8），上面改了下面會跟著變。 */
+     * 其他輸入、抓來的數值都參照第一張表（例如 =D12），上面改了下面會跟著變。 */
     var rows2 = drawFrame(OFF2, 'YO加班上限' + yoLimit + 'hr/人');
     for (i = 0; i < R.months; i++) {
       var head1 = ws.getCell(rows.headRow, R.monthCol + i);
@@ -2595,7 +2617,7 @@
   }
 
   var ExcelIO = {
-    VERSION: 3,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
+    VERSION: 4,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
     colToNum: colToNum,
     numToCol: numToCol,
     normalizeText: normalizeText,
@@ -2643,7 +2665,8 @@
     REPORT_ROWS: REPORT_ROWS,
     addReportSheet: addReportSheet,
     REPORT_LINKS: REPORT_LINKS,
-    REPORT_OFFLINE: REPORT_OFFLINE,
+    REPORT_TITLE_DEFAULT: REPORT_TITLE_DEFAULT,
+    OFFLINE_RATE: OFFLINE_RATE,
     YO_LIMIT_DEFAULT: YO_LIMIT_DEFAULT,
     RMA_SHEET: RMA_SHEET,
     RMA_LAYOUT: RMA_LAYOUT,
