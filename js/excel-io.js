@@ -751,20 +751,32 @@
   }
 
   // 每份報表最後一列的下框線：紫色粗線（#9000FF），一眼看出哪裡換下一份報表。
-  // 報表裡原本的粗下框線（例如原報表最後一列的黑粗線）落在中間的列時拿掉，只留每份報表的分界。
+  // Excel 裡上下兩格交界的線，下面那格的「上框線」會蓋過上面那格的「下框線」，
+  // 所以下一份報表第一列的上框線也一起改成紫色，不然原報表的細黑線會把紫線蓋掉一部分。
+  // 報表裡原本的粗框線（例如原報表最後一列的黑粗線）落在中間的列時拿掉，只留每份報表的分界。
   var PART_END_BORDER = { style: 'medium', color: { argb: 'FF9000FF' } };
   function isThickLine(b) { return !!(b && (b.style === 'medium' || b.style === 'thick')); }
   function markPartEnds(ws, parts, colCount) {
+    var lastRow = 0;
+    parts.forEach(function (p) { if (p.matched) lastRow = Math.max(lastRow, p.lastRow); });
+    var ends = {}, starts = {};
+    parts.forEach(function (p) {
+      if (!p.matched) return;
+      ends[p.lastRow] = true;
+      if (p.lastRow < lastRow) starts[p.lastRow + 1] = true;
+    });
     parts.forEach(function (p) {
       if (!p.matched) return;
       for (var r = p.firstRow; r <= p.lastRow; r++) {
         for (var c = 1; c <= colCount; c++) {
           var cell = ws.getCell(r, c);
           var border = Object.assign({}, cell.style && cell.style.border);
-          if (r === p.lastRow) border.bottom = PART_END_BORDER;
-          else if (isThickLine(border.bottom)) delete border.bottom;
-          else continue;
-          cell.style = Object.assign({}, cell.style, { border: border });
+          var changed = false;
+          if (ends[r]) { border.bottom = PART_END_BORDER; changed = true; }
+          else if (isThickLine(border.bottom)) { delete border.bottom; changed = true; }
+          if (starts[r]) { border.top = PART_END_BORDER; changed = true; }
+          else if (r > p.firstRow && isThickLine(border.top)) { delete border.top; changed = true; }
+          if (changed) cell.style = Object.assign({}, cell.style, { border: border });
         }
       }
     });
@@ -1324,89 +1336,129 @@
    * 先算出 MPS 各月的匯總，不動工作表（給畫面預覽用）。
    *
    * o.dataStartRow  資料從第幾列開始
-   * o.keyCol        料號在哪一行（用來判斷資料到第幾列、以及顯示前三大是誰）
+   * o.keyCol        料號在哪一行（用來判斷資料到第幾列）
    * o.wipCol        當月 WIP 在哪一行
    * o.monthCols     各月預計產量在哪幾行（陣列，第一個是當月）
-   * o.topN          前幾大（預設 3）
+   * o.statusCol     Status 在哪一行（量產、試產用這一行分）
+   * o.groups        [{ key: 'M', label: '量產' }, { key: 'R', label: '試產' }]：Status 等於 key 的列算進這一組
    *
-   * 當月（第一個月）的數量一律先加上 WIP：總產量、前三大、標示都是用「WIP + 當月產量」來算。
+   * 當月（第一個月）的數量一律先加上 WIP。
    *
    * 回傳：
    *   found       有沒有資料
    *   firstRow / lastRow   資料的第一列、最後一列
-   *   totalRow / topRow / restRow   三個匯總列的列號（最後一列資料之後空一列開始）
+   *   totalRow    Total 那一列；groupRows[k] 是各組那一列（Total 下面依序往下）
+   *   rows        [totalRow, groupRows…]
    *   labelCol    文字標籤放在哪一行（第一個月左邊那一行）
-   *   months      [{ col, total, top, rest, error, topRows: [{ row, label, value }] }]
-   *               topRows 只列數值大於 0 的
+   *   months      [{ col, total, groups: [各組合計], error }]
+   *   counts      各組有幾列料號（陣列，和 groups 同順序）
+   *   others      Status 不是任何一組的列 [{ row, label, status }]（不算進量產、試產，只算進 Total）
    */
+  function statusKey(v) {
+    v = plainValue(v);
+    if (v === null || v === undefined) return '';
+    return normalizeText(v).toUpperCase();
+  }
+
   function planMpsTotals(main, o) {
     var lastRow = lastKeyRow(main, o.keyCol, o.dataStartRow);
     if (!lastRow) return { found: false };
-    var topN = o.topN || 3;
+    var groups = o.groups || [];
+    var groupOf = {};          // 列號 -> 第幾組（-1 = 不屬於任何一組）
+    var counts = groups.map(function () { return 0; });
+    var others = [];
+    for (var r = o.dataStartRow; r <= lastRow; r++) {
+      var row = main.findRow(r);
+      var keyCell = row ? row.findCell(o.keyCol) : null;
+      if (!keyCell || normalizeText(displayText(keyCell)) === '') { groupOf[r] = -1; continue; }
+      var sk = statusKey(cellRawValue(row.findCell(o.statusCol)));
+      var g = -1;
+      groups.forEach(function (gr, k) { if (g < 0 && sk === statusKey(gr.key)) g = k; });
+      groupOf[r] = g;
+      if (g >= 0) counts[g]++;
+      else others.push({ row: r, label: displayText(keyCell), status: displayText(row.findCell(o.statusCol)) });
+    }
     var months = o.monthCols.map(function (c, i) {
-      var items = [];
       var error = null;
+      var total = 0;
+      var sums = groups.map(function () { return 0; });
       for (var r = o.dataStartRow; r <= lastRow; r++) {
         var row = main.findRow(r);
         var qty = numberOrError(row ? row.findCell(c) : null);
         var wip = i === 0 ? numberOrError(row ? row.findCell(o.wipCol) : null) : { value: 0 };
         if (qty.error || wip.error) { if (!error) error = qty.error || wip.error; continue; }
-        var keyCell = row ? row.findCell(o.keyCol) : null;
-        items.push({ row: r, label: keyCell ? displayText(keyCell) : '', value: qty.value + wip.value });
+        var v = qty.value + wip.value;
+        total += v;
+        if (groupOf[r] >= 0) sums[groupOf[r]] += v;
       }
-      var total = 0;
-      items.forEach(function (it) { total += it.value; });
-      var topRows = items.filter(function (it) { return it.value > 0; })
-        .sort(function (a, b) { return b.value - a.value || a.row - b.row; }).slice(0, topN);
-      var top = 0;
-      topRows.forEach(function (it) { top += it.value; });
-      return { col: c, total: total, top: top, rest: total - top, error: error, topRows: topRows };
+      return { col: c, total: total, groups: sums, error: error };
     });
     var firstMonth = Math.min.apply(null, o.monthCols);
+    var totalRow = lastRow + 2;
+    var groupRows = groups.map(function (gr, k) { return totalRow + 1 + k; });
     return {
       found: true,
       firstRow: o.dataStartRow,
       lastRow: lastRow,
-      totalRow: lastRow + 2,
-      topRow: lastRow + 3,
-      restRow: lastRow + 4,
+      totalRow: totalRow,
+      groupRows: groupRows,
+      rows: [totalRow].concat(groupRows),
       labelCol: firstMonth > 1 ? firstMonth - 1 : 0,
-      months: months
+      months: months,
+      counts: counts,
+      others: others
     };
   }
 
+  // 各月匯總的公式（畫面上的說明也用這個，Excel 和畫面才會一致）
+  // 回傳 [Total 的公式, 各組的公式…]（不含開頭的 =）
+  function mpsTotalsFormulas(plan, o, i) {
+    var m = plan.months[i];
+    var first = plan.firstRow, last = plan.lastRow;
+    var L = numToCol(m.col);
+    var range = L + first + ':' + L + last;
+    var wipL = numToCol(o.wipCol);
+    var wipRange = wipL + first + ':' + wipL + last;
+    var S = numToCol(o.statusCol);
+    var statusRange = '$' + S + '$' + first + ':$' + S + '$' + last;
+    var out = [i === 0 ? 'SUM(' + wipRange + ')+SUM(' + range + ')' : 'SUM(' + range + ')'];
+    (o.groups || []).forEach(function (gr) {
+      var crit = '"' + String(gr.key).replace(/"/g, '""') + '"';
+      out.push(i === 0
+        ? 'SUMIF(' + statusRange + ',' + crit + ',' + wipRange + ')+SUMIF(' + statusRange + ',' + crit + ',' + range + ')'
+        : 'SUMIF(' + statusRange + ',' + crit + ',' + range + ')');
+    });
+    return out;
+  }
+
   /*
-   * 把 MPS 匯總寫進工作表（最後一列資料之後空一列開始，共三列，對齊各月的行），每格都是公式。
-   * 以 WIP 在 D 行、當月在 E 行、資料在第 5 到 74 列為例：
+   * 把 MPS 匯總寫進工作表（最後一列資料之後空一列開始，對齊各月的行），每格都是公式。
+   * 以 Status 在 C 行、WIP 在 D 行、當月在 E 行、資料在第 5 到 74 列為例：
    *
-   *                 當月（要加 WIP）                              其他月份
-   *   Total       =SUM(D5:D74)+SUM(E5:E74)                       =SUM(F5:F74)
-   *   Top 3       =SUMPRODUCT(LARGE(D5:D74+E5:E74,{1,2,3}))      =LARGE(F5:F74,1)+LARGE(F5:F74,2)+LARGE(F5:F74,3)
-   *   Non-Top 3   =E76-E77                                       =F76-F77
+   *            當月（要加 WIP）                                                    其他月份
+   *   Total    =SUM(D5:D74)+SUM(E5:E74)                                           =SUM(F5:F74)
+   *   量產     =SUMIF($C$5:$C$74,"M",D5:D74)+SUMIF($C$5:$C$74,"M",E5:E74)          =SUMIF($C$5:$C$74,"M",F5:F74)
+   *   試產     =SUMIF($C$5:$C$74,"R",D5:D74)+SUMIF($C$5:$C$74,"R",E5:E74)          =SUMIF($C$5:$C$74,"R",F5:F74)
+   *
+   * Status 不是 M 也不是 R 的列只會算進 Total（畫面上會提醒）。
    *
    * 外觀：文字標籤放在第一個月左邊那一行、置中；標籤加上各月圍成一塊，外框粗線、裡面細格線。
    *       Total 那一列整列是淺綠色底（#B5E48C）。
    *
-   * 各月前三大的儲存格用「條件式格式」標上淺橘色，數值是 0 的不算：
-   *   當月     =AND($D5+E5>0, SUMPRODUCT(--($D$5:$D$74+E$5:E$74>$D5+E5))<3)   比「WIP + 當月」大的不到 3 個
-   *   其他月   =AND(F5>0, F5>=LARGE(F$5:F$74,3))
-   *
-   * o.labels = { total, top, rest }  三列的文字標籤
+   * o.labels = { total }，各組的文字標籤用 o.groups[k].label
    * 其餘參數和 planMpsTotals 一樣，回傳的也是同一份結果。
    */
   function addMpsTotals(main, o) {
     var plan = planMpsTotals(main, o);
     if (!plan.found) return plan;
-    var first = plan.firstRow, last = plan.lastRow;
-    var topN = Math.min(o.topN || 3, last - first + 1);
-    var rows = [plan.totalRow, plan.topRow, plan.restRow];
-    var texts = [o.labels.total, o.labels.top, o.labels.rest];
+    var rows = plan.rows;
+    var texts = [o.labels.total].concat((o.groups || []).map(function (gr) { return gr.label; }));
     var leftCol = plan.labelCol || Math.min.apply(null, o.monthCols);
     var rightCol = Math.max.apply(null, o.monthCols);
     var inMonth = {};
     o.monthCols.forEach(function (c) { inMonth[c] = true; });
 
-    // 重做時，先把這三列在這一塊裡原本的內容清掉
+    // 重做時，先把這幾列在這一塊裡原本的內容清掉
     rows.forEach(function (r) {
       var row = main.findRow(r);
       if (!row) return;
@@ -1425,40 +1477,20 @@
         right: c === rightCol ? THICK : THIN
       };
     }
-    var sample = main.findCell(first, o.monthCols[0]);
+    var sample = main.findCell(plan.firstRow, o.monthCols[0]);
     var font = sample && sample.style && sample.style.font ? Object.assign({}, sample.style.font) : undefined;
     if (font) delete font.bold;
 
-    var wipL = numToCol(o.wipCol);
-    var ks = [];
-    for (var k = 1; k <= topN; k++) ks.push(k);
-
     plan.months.forEach(function (m, i) {
-      var L = numToCol(m.col);
-      var range = L + first + ':' + L + last;
-      var wipRange = wipL + first + ':' + wipL + last;
-      var formulas;
-      if (i === 0) {
-        formulas = [
-          'SUM(' + wipRange + ')+SUM(' + range + ')',
-          'SUMPRODUCT(LARGE(' + wipRange + '+' + range + ',{' + ks.join(',') + '}))',
-          L + plan.totalRow + '-' + L + plan.topRow
-        ];
-      } else {
-        formulas = [
-          'SUM(' + range + ')',
-          ks.map(function (n) { return 'LARGE(' + range + ',' + n + ')'; }).join('+'),
-          L + plan.totalRow + '-' + L + plan.topRow
-        ];
-      }
-      var results = m.error ? [{ error: m.error }, { error: m.error }, { error: m.error }] : [m.total, m.top, m.rest];
+      var formulas = mpsTotalsFormulas(plan, o, i);
+      var results = [m.total].concat(m.groups);
       rows.forEach(function (r, j) {
         var cell = main.getCell(r, m.col);
         var style = { numFmt: INTEGER_FORMAT, border: boxBorder(r, m.col), alignment: { vertical: 'middle' } };
         if (font) style.font = font;
         if (j === 0) style.fill = TOTAL_FILL;
         cell.style = style;
-        cell.value = { formula: formulas[j], result: results[j] };
+        cell.value = { formula: formulas[j], result: m.error ? { error: m.error } : results[j] };
       });
     });
 
@@ -1475,27 +1507,10 @@
       if (!labelColumn.width || labelColumn.width < 12) labelColumn.width = 12;
     }
 
-    // 前三大標淺橘色：先拿掉之前加在這幾行的規則，再一個月加一條
+    // 舊版會在各月加「前三大淺橘色」的條件式格式，重做時拿掉
     main.conditionalFormattings = (main.conditionalFormattings || []).filter(function (cf) {
-      var m = /^([A-Z]+)\d+:([A-Z]+)\d+$/.exec(String(cf.ref || ''));
-      return !(m && m[1] === m[2] && inMonth[colToNum(m[1])]);
-    });
-    var fillStyle = { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: TOP_FILL_ARGB } } };
-    plan.months.forEach(function (m, i) {
-      var L = numToCol(m.col);
-      var here = L + first;
-      var formula;
-      if (i === 0) {
-        var both = '$' + wipL + first + '+' + here;
-        formula = 'AND(' + both + '>0,SUMPRODUCT(--($' + wipL + '$' + first + ':$' + wipL + '$' + last + '+' +
-          L + '$' + first + ':' + L + '$' + last + '>' + both + '))<' + topN + ')';
-      } else {
-        formula = 'AND(' + here + '>0,' + here + '>=LARGE(' + L + '$' + first + ':' + L + '$' + last + ',' + topN + '))';
-      }
-      main.addConditionalFormatting({
-        ref: L + first + ':' + L + last,
-        rules: [{ type: 'expression', priority: nextPriority(main), formulae: [formula], style: fillStyle }]
-      });
+      var mm = /^([A-Z]+)\d+:([A-Z]+)\d+$/.exec(String(cf.ref || ''));
+      return !(mm && mm[1] === mm[2] && inMonth[colToNum(mm[1])]);
     });
 
     var wb = main.workbook;
@@ -2624,6 +2639,7 @@
     addDemandColumns: addDemandColumns,
     planMpsTotals: planMpsTotals,
     addMpsTotals: addMpsTotals,
+    mpsTotalsFormulas: mpsTotalsFormulas,
     planSummary: planSummary,
     addSummaryRows: addSummaryRows,
     planRma: planRma,

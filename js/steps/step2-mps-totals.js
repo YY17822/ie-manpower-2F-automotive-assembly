@@ -1,22 +1,23 @@
 /*
  * 第 2 步：匯總
- *   算出 MPS 各月的預計總產量（Total）、前三大料號的合計（Top 3）、其餘的合計（Non-Top 3）。
+ *   算出 MPS 各月的預計總產量（Total），再用 Status 分成量產（M）和試產（R）的合計。
  *   表格放在篩選後的 MPS 資料下面：最後一列資料之後空一列開始，共三列，對齊各月的行；
  *   文字標籤在第一個月左邊那一行。每格都是公式。
  *
- *   當月（第一個月）比較特別：數量要先加上 WIP。總產量、前三大、標示都是用「WIP + 當月產量」來算。
- *   以 WIP 在 D 行、當月在 E 行、資料在第 5 到 74 列為例：
+ *   當月（第一個月）比較特別：數量要先加上 WIP。
+ *   以 Status 在 C 行、WIP 在 D 行、當月在 E 行、資料在第 5 到 74 列為例：
  *
- *                 當月                                          其他月份
- *     Total       =SUM(D5:D74)+SUM(E5:E74)                     =SUM(F5:F74)
- *     Top 3       =SUMPRODUCT(LARGE(D5:D74+E5:E74,{1,2,3}))    =LARGE(F5:F74,1)+LARGE(F5:F74,2)+LARGE(F5:F74,3)
- *     Non-Top 3   =E76-E77                                     =F76-F77
+ *            當月                                                             其他月份
+ *     Total  =SUM(D5:D74)+SUM(E5:E74)                                        =SUM(F5:F74)
+ *     量產   =SUMIF($C$5:$C$74,"M",D5:D74)+SUMIF($C$5:$C$74,"M",E5:E74)       =SUMIF($C$5:$C$74,"M",F5:F74)
+ *     試產   =SUMIF($C$5:$C$74,"R",D5:D74)+SUMIF($C$5:$C$74,"R",E5:E74)       =SUMIF($C$5:$C$74,"R",F5:F74)
  *
- *   各月前三大的儲存格用 Excel 的條件式格式標成淺橘色（數值是 0 的不算）。
+ *   Status 不是 M 也不是 R 的列只算進 Total，畫面上會列出來提醒。
  *   Total 那一列是淺綠色底（#B5E48C）；整塊外框粗線、裡面細格線。
  *
  *   WIP 和六個月各在哪一行由使用者指定，和第 5 步（計算需求工時）共用同一組設定，
  *   在其中一步改了，另一步也會跟著變，避免兩邊對不起來。
+ *   Status 在哪一行：預設用第 1 步指定的；這一步改了會記住。
  *
  *   來源有兩種：
  *     a. 剛才第 1 步篩選好的結果（不用先匯出，直接沿用）
@@ -35,9 +36,11 @@
   var STORE_KEY = IEApp.storeKey('totals');
   var STEP1_KEY = IEApp.storeKey('step1');
   var REF_SHEET = 'P003';
-  var LABELS = { total: 'Total', top: 'Top 3', rest: 'Non-Top 3' };
+  var LABELS = { total: 'Total' };
+  // Status 等於 key 的列算進這一組（不分大小寫）
+  var GROUPS = [{ key: 'M', label: '量產' }, { key: 'R', label: '試產' }];
+  var STATUS_GUESS = /status|狀態/i;
   var SUFFIX = '_匯總';
-  var TOP_N = 3;
   var KEY_COL = 1;              // 料號在第 1 行
   var WIP_DEFAULT = 4;          // 第 4 行是當月 WIP
   var MONTH_FIRST = 5;          // 第 5 行起是月份
@@ -48,7 +51,7 @@
     preferUpload: false,
     work: null            // 拿來預覽、統計的活頁簿 { src, loading, error, wb, main, mainExt }
   };
-  var settings = { startRow: '', wipCol: '', monthCols: '' };
+  var settings = { startRow: '', wipCol: '', monthCols: '', statusCol: '' };
   var els = {};
   var timer = null;
 
@@ -58,12 +61,15 @@
     var shared = ui.columns.get();          // WIP、月份的行和第 5 步共用
     settings = {
       startRow: s.startRow === undefined ? '' : s.startRow,
+      statusCol: s.statusCol === undefined ? '' : String(s.statusCol),
       wipCol: shared.wipCol,
       monthCols: shared.monthCols
     };
   }
   function saveSettings() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ startRow: settings.startRow })); } catch (e) { /* 存不了就算了 */ }
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify({ startRow: settings.startRow, statusCol: settings.statusCol }));
+    } catch (e) { /* 存不了就算了 */ }
     ui.columns.set({ wipCol: settings.wipCol, monthCols: settings.monthCols });
   }
 
@@ -103,6 +109,16 @@
     return n >= 1 ? n : 5;
   }
 
+  // Status 在哪一行：這一步改過就用這一步的；沒有的話用第 1 步指定的
+  function step1StatusCol(cols) {
+    var src = activeSource();
+    if (src && src.kind === 'prev' && src.prev.statusCol && src.prev.statusCol <= cols) return src.prev.statusCol;
+    try {
+      var s1 = JSON.parse(localStorage.getItem(STEP1_KEY) || '{}') || {};
+      return colOf(s1.statusCol, cols);
+    } catch (e) { return 0; }
+  }
+
   function colOf(letter, max) {
     var p = XIO.parseColumns(letter || '');
     return p.cols.length === 1 && !p.bad.length && p.cols[0] <= max ? p.cols[0] : 0;
@@ -127,6 +143,7 @@
     });
     els.srcMsg = h('p', { class: 'msg is-error', role: 'alert', hidden: true });
 
+    els.statusCol = h('select', { id: 'ft-status', class: 'in-select' });
     els.wipCol = h('select', { id: 'ft-wip', class: 'in-select' });
     els.monthCols = h('input', {
       id: 'ft-months', type: 'text', class: 'in in-select', autocomplete: 'off', spellcheck: 'false',
@@ -139,7 +156,7 @@
     els.summary = h('p', { class: 'summary', 'aria-live': 'polite' });
     els.notes = h('ul', { class: 'notes' });
     els.result = h('div', { class: 'sheet-area' });
-    els.tops = h('div', { class: 'sheet-area' });
+    els.others = h('div', { class: 'sheet-area' });
     els.exportBtn = h('button', { type: 'button', class: 'btn-primary', disabled: true, text: '匯出 Excel', onclick: onExport });
     els.nextBtn = h('button', {
       type: 'button', class: 'btn-secondary', disabled: true, text: '下一步：匯入 P003',
@@ -149,7 +166,7 @@
 
     panel.appendChild(h('div', { class: 'step-head' },
       h('h1', { text: '匯總' }),
-      h('p', { text: '在篩選後的 MPS 下面加上各月的預計總產量（Total）、前三大料號的合計（Top 3），以及其餘的合計（Non-Top 3）。當月會先加上 WIP 再算。每格都是公式，各月前三大的儲存格會標成淺橘色。' })));
+      h('p', { text: '在篩選後的 MPS 下面加上各月的預計總產量（Total），再用 Status 分成量產（M）和試產（R）的合計。當月會先加上 WIP 再算。每格都是公式。' })));
 
     panel.appendChild(h('ol', { class: 'tasks' },
       h('li', { class: 'task' },
@@ -158,10 +175,12 @@
         h('div', { class: 'link-row' }, els.switchBtn, els.backBtn),
         els.srcMsg),
       h('li', { class: 'task' },
-        h('h2', { text: 'WIP 和各月產量在哪幾行' }),
+        h('h2', { text: 'Status、WIP 和各月產量在哪幾行' }),
         h('div', { class: 'field-grid' },
+          h('label', { for: 'ft-status', text: 'Status 在' }), els.statusCol,
           h('label', { for: 'ft-wip', text: '當月 WIP 在' }), els.wipCol,
           h('label', { for: 'ft-months', text: '各月產量在' }), els.monthCols),
+        h('p', { class: 'hint', text: 'Status 預設是第 1 步指定的那一行：M 算量產、R 算試產。' }),
         h('p', { class: 'hint', text: '各月產量的第一行是當月，會先加上 WIP 再算；連續的行可以寫成 E:J，也可以點下面表格最上方的行號來選。這裡的設定和第 5 步（計算需求工時）共用。' }),
         els.mainPreview,
         h('details', { class: 'advanced' },
@@ -170,9 +189,15 @@
             h('label', { for: 'ft-start', text: 'MPS 的資料從第' }), els.startRow, els.startNote))),
       h('li', { class: 'task' },
         h('h2', { text: '匯出' }),
-        els.summary, els.notes, els.result, els.tops,
+        els.summary, els.notes, els.result, els.others,
         h('div', { class: 'actions' }, els.exportBtn, els.nextBtn, els.exportNote))));
 
+    els.statusCol.addEventListener('change', function () {
+      settings.statusCol = els.statusCol.value;
+      saveSettings();
+      els.exportNote.textContent = '';
+      refresh();
+    });
     els.wipCol.addEventListener('change', function () {
       settings.wipCol = els.wipCol.value;
       saveSettings();
@@ -290,7 +315,7 @@
     els.nextBtn.disabled = true;
     els.notes.textContent = '';
     els.result.textContent = '';
-    els.tops.textContent = '';
+    els.others.textContent = '';
 
     if (!src) {
       els.srcInfo.textContent = '還沒有第 1 步的結果。回到第 1 步篩選 MPS，或上傳之前匯出的檔案。';
@@ -314,8 +339,10 @@
     els.startNote.textContent = chain ? '列開始（沿用第 1 步的設定）' : '列開始';
 
     function clear() {
-      els.wipCol.textContent = '';
-      els.wipCol.appendChild(h('option', { value: '', text: '請選擇' }));
+      [els.wipCol, els.statusCol].forEach(function (sel) {
+        sel.textContent = '';
+        sel.appendChild(h('option', { value: '', text: '請選擇' }));
+      });
       els.mainPreview.textContent = '';
     }
     if (!src) { clear(); setSummary('先準備好第 1 步的 Excel。'); return; }
@@ -339,6 +366,13 @@
       for (var c = MONTH_FIRST; c < MONTH_FIRST + MONTH_COUNT && c <= cols; c++) monthCols.push(c);
     }
 
+    // Status：這一步選過的 → 第 1 步指定的 → 表頭有「Status」的那一行
+    var statusCol = colOf(settings.statusCol, cols) || step1StatusCol(cols);
+    if (!statusCol) {
+      for (var g = 1; g <= cols; g++) if (STATUS_GUESS.test(labels[g] || '')) { statusCol = g; break; }
+    }
+
+    fillSelect(els.statusCol, labels, cols, statusCol);
     fillSelect(els.wipCol, labels, cols, wipCol);
     if (!keepMonthText) els.monthCols.value = XIO.normalizeText(settings.monthCols) ? settings.monthCols : compact(monthCols);
 
@@ -354,16 +388,18 @@
       setSummary('看不懂「' + parsed.bad.join('、') + '」。行號請用英文字母，例如 E:J。', true);
       return;
     }
+    if (!statusCol) { setSummary('選擇 Status 在哪一行。'); return; }
     if (!wipCol) { setSummary('選擇當月 WIP 在哪一行。'); return; }
     if (!monthCols.length) { setSummary('輸入各月產量在哪幾行。'); return; }
-    var clash = monthCols.filter(function (mc) { return mc === wipCol || mc === KEY_COL || mc > cols; });
+    var clash = monthCols.filter(function (mc) { return mc === wipCol || mc === KEY_COL || mc === statusCol || mc > cols; });
     if (clash.length) {
-      setSummary(XIO.formatColumns(clash) + ' 行不能當作各月產量（和 WIP 或料號重複，或超出報表範圍）。', true);
+      setSummary(XIO.formatColumns(clash) + ' 行不能當作各月產量（和 Status、WIP 或料號重複，或超出報表範圍）。', true);
       return;
     }
 
     var opts = {
-      dataStartRow: sr, keyCol: KEY_COL, wipCol: wipCol, monthCols: monthCols, topN: TOP_N, labels: LABELS
+      dataStartRow: sr, keyCol: KEY_COL, wipCol: wipCol, monthCols: monthCols, statusCol: statusCol,
+      groups: GROUPS, labels: LABELS
     };
     var plan = XIO.planMpsTotals(work.main, opts);
     if (!plan.found) {
@@ -374,7 +410,8 @@
     var firstL = XIO.numToCol(monthCols[0]);
     var lastL = XIO.numToCol(monthCols[monthCols.length - 1]);
     var hasError = plan.months.some(function (m) { return !!m.error; });
-    setSummary('匯總會填在 ' + work.main.name + ' 工作表的第 ' + plan.totalRow + ' 到 ' + plan.restRow +
+    var endRow = plan.rows[plan.rows.length - 1];
+    setSummary('匯總會填在 ' + work.main.name + ' 工作表的第 ' + plan.totalRow + ' 到 ' + endRow +
       ' 列（最後一列資料是第 ' + plan.lastRow + ' 列，空一列），' + firstL + ' 到 ' + lastL + ' 行，共 ' +
       monthCols.length + ' 個月；文字標籤在 ' + XIO.numToCol(plan.labelCol) + ' 行。', false, hasError);
 
@@ -383,13 +420,23 @@
       els.notes.appendChild(h('li', { class: 'is-warn' },
         bad.join('、') + ' 行有不是數字的格子，Excel 裡這幾個月的匯總會顯示錯誤。請先檢查 MPS 的數量。'));
     }
+    GROUPS.forEach(function (gr, k) {
+      if (!plan.counts[k]) {
+        els.notes.appendChild(h('li', { class: 'is-warn' },
+          XIO.numToCol(statusCol) + ' 行沒有「' + gr.key + '」的列，' + gr.label + '每個月都會是 0。請確認 Status 選對行。'));
+      }
+    });
+    if (plan.others.length) {
+      els.notes.appendChild(h('li', { class: 'is-warn' },
+        '有 ' + plan.others.length + ' 列的 Status 不是 M 也不是 R，只會算進 Total，不算進量產、試產。清單在下面。'));
+    }
     if (monthCols.length !== MONTH_COUNT) {
       els.notes.appendChild(h('li', { class: 'is-warn' },
         '目前選了 ' + monthCols.length + ' 個月份，通常是 ' + MONTH_COUNT + ' 個（當月加往後五個月）。'));
     }
 
-    renderResult(plan, labels, wipCol);
-    renderTops(plan, labels);
+    renderResult(plan, labels, opts);
+    renderOthers(plan);
     els.exportBtn.disabled = false;
     els.nextBtn.disabled = false;
 
@@ -403,6 +450,7 @@
       headerEnd: headerEnd,
       wipCol: wipCol,
       monthCols: monthCols,
+      statusCol: statusCol,
       build: function () { return buildWorkbook(src, opts); }
     };
   }
@@ -421,21 +469,26 @@
     return h('th', { class: 'colhead', scope: 'col', text: text });
   }
 
-  // 三個匯總列算出來的數字，以及當月和下一個月填入的公式
-  function renderResult(plan, labels, wipCol) {
+  // 匯總列算出來的數字，以及當月和下一個月填入的公式
+  function renderResult(plan, labels, opts) {
     var head = h('tr', null,
       h('th', { class: 'colhead', scope: 'col', text: '列' }),
       h('th', { class: 'colhead', scope: 'col', text: '項目' }));
     plan.months.forEach(function (m, i) { head.appendChild(monthHead(m, labels, i)); });
 
+    var items = [{ label: LABELS.total, row: plan.totalRow, value: function (m) { return m.total; }, cls: ' is-total' }];
+    GROUPS.forEach(function (gr, k) {
+      items.push({ label: gr.label + '（' + gr.key + '，' + plan.counts[k] + ' 列）', row: plan.groupRows[k],
+        value: function (m) { return m.groups[k]; }, cls: '' });
+    });
+
     var body = h('tbody');
-    [['total', plan.totalRow], ['top', plan.topRow], ['rest', plan.restRow]].forEach(function (pair) {
+    items.forEach(function (it) {
       var tr = h('tr', null,
-        h('th', { class: 'rowhead', scope: 'row', text: String(pair[1]) }),
-        h('td', { text: LABELS[pair[0]] }));
+        h('th', { class: 'rowhead', scope: 'row', text: String(it.row) }),
+        h('td', { text: it.label }));
       plan.months.forEach(function (m) {
-        var cls = 'is-num' + (pair[0] === 'total' ? ' is-total' : pair[0] === 'top' ? ' is-top' : '');
-        tr.appendChild(h('td', { class: cls, text: m.error ? m.error : showNumber(m[pair[0]]) }));
+        tr.appendChild(h('td', { class: 'is-num' + it.cls, text: m.error ? m.error : showNumber(it.value(m)) }));
       });
       body.appendChild(tr);
     });
@@ -444,47 +497,35 @@
     els.result.appendChild(h('div', { class: 'sheet-scroll', tabindex: '0', role: 'group', 'aria-label': '匯總結果' },
       h('table', { class: 'sheet is-result' }, h('thead', null, head), body)));
 
-    var W = XIO.numToCol(wipCol);
-    var a = plan.firstRow, b = plan.lastRow;
-    var n = Math.min(TOP_N, b - a + 1);
-    var ks = [];
-    for (var k = 1; k <= n; k++) ks.push(k);
-    var L = XIO.numToCol(plan.months[0].col);
-    var text = '當月（' + L + ' 行）的公式：' +
-      L + plan.totalRow + ' =SUM(' + W + a + ':' + W + b + ')+SUM(' + L + a + ':' + L + b + ')　' +
-      L + plan.topRow + ' =SUMPRODUCT(LARGE(' + W + a + ':' + W + b + '+' + L + a + ':' + L + b + ',{' + ks.join(',') + '}))　' +
-      L + plan.restRow + ' =' + L + plan.totalRow + '-' + L + plan.topRow;
-    els.result.appendChild(h('p', { class: 'hint', text: text }));
-    if (plan.months.length > 1) {
-      var M = XIO.numToCol(plan.months[1].col);
-      var range = M + a + ':' + M + b;
-      els.result.appendChild(h('p', { class: 'hint', text: '其他月份（以 ' + M + ' 行為例）：' +
-        M + plan.totalRow + ' =SUM(' + range + ')　' +
-        M + plan.topRow + ' =' + ks.map(function (x) { return 'LARGE(' + range + ',' + x + ')'; }).join('+') + '　' +
-        M + plan.restRow + ' =' + M + plan.totalRow + '-' + M + plan.topRow }));
+    var names = [LABELS.total].concat(GROUPS.map(function (gr) { return gr.label; }));
+    function explain(i, prefix) {
+      var L = XIO.numToCol(plan.months[i].col);
+      var f = XIO.mpsTotalsFormulas(plan, opts, i);
+      els.result.appendChild(h('p', { class: 'hint', text: prefix + plan.rows.map(function (r, j) {
+        return names[j] + ' ' + L + r + ' =' + f[j];
+      }).join('　') }));
     }
+    explain(0, '當月（' + XIO.numToCol(plan.months[0].col) + ' 行，加 WIP）的公式：');
+    if (plan.months.length > 1) explain(1, '其他月份（以 ' + XIO.numToCol(plan.months[1].col) + ' 行為例）：');
   }
 
-  // 每個月前三大是哪幾個料號（這些儲存格會標成淺橘色）
-  function renderTops(plan, labels) {
-    var head = h('tr', null, h('th', { class: 'colhead', scope: 'col', text: '名次' }));
-    plan.months.forEach(function (m, i) { head.appendChild(monthHead(m, labels, i)); });
+  // Status 不是 M 也不是 R 的列
+  function renderOthers(plan) {
+    if (!plan.others.length) return;
+    var head = h('tr', null,
+      h('th', { class: 'colhead', scope: 'col', text: '列' }),
+      h('th', { class: 'colhead', scope: 'col', text: '料號' }),
+      h('th', { class: 'colhead', scope: 'col', text: 'Status' }));
     var body = h('tbody');
-    var depth = 0;
-    plan.months.forEach(function (m) { depth = Math.max(depth, m.topRows.length); });
-    for (var i = 0; i < depth; i++) {
-      var tr = h('tr', null, h('th', { class: 'rowhead', scope: 'row', text: String(i + 1) }));
-      plan.months.forEach(function (m) {
-        var it = m.topRows[i];
-        tr.appendChild(h('td', { class: 'is-top' },
-          it ? h('span', { class: 'top-name', text: it.label }) : '',
-          it ? h('span', { class: 'top-value', text: showNumber(it.value) + '（第 ' + it.row + ' 列）' }) : ''));
-      });
-      body.appendChild(tr);
-    }
-    els.tops.appendChild(h('p', { class: 'sheet-caption', text: '各月前三大的料號（數值是 0 的不算；當月是 WIP 加當月產量）。這些儲存格在 Excel 裡會標成淺橘色。' }));
-    els.tops.appendChild(h('div', { class: 'sheet-scroll', tabindex: '0', role: 'group', 'aria-label': '各月前三大' },
-      h('table', { class: 'sheet is-result is-tops' }, h('thead', null, head), body)));
+    plan.others.forEach(function (o) {
+      body.appendChild(h('tr', null,
+        h('th', { class: 'rowhead', scope: 'row', text: String(o.row) }),
+        h('td', { text: o.label }),
+        h('td', { text: o.status === '' ? '（空白）' : o.status })));
+    });
+    els.others.appendChild(h('p', { class: 'sheet-caption', text: 'Status 不是 M 也不是 R 的列（只算進 Total）。' }));
+    els.others.appendChild(h('div', { class: 'sheet-scroll', tabindex: '0', role: 'group', 'aria-label': 'Status 不是 M 或 R 的列' },
+      h('table', { class: 'sheet is-result' }, h('thead', null, head), body)));
   }
 
   /* ---------- 產生活頁簿 ---------- */
