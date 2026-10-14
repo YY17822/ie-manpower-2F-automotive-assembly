@@ -27,13 +27,13 @@
  *     平日工作天數     各月自己輸入（每個月不同，不記住）
  *     工作時間         各月自己輸入，預設 480 分
  *     加班時間         輸入每日加班幾小時、加班出勤人數 %，填公式 =2*60*80%，備註寫輸入的數值
- *     綜合效率% 量產、試產、重工，出勤率%   各月自己輸入，預設 80%、95%、95%、95%
+ *     綜合效率% 量產、試產、重工，出勤率%   各月自己輸入，第一次預設 95%、85%、80%、95%，之後用上次輸入的值
+ *     需求人力 新機種+重工   輸入各新機種（名稱可增減）和重工各月幾人，加總填公式 =2+3+1，備註寫是哪些機種
+ *     需求人力 Off line      輸入領班、物料（含材製損）、文書、包裝幾人（每個月一樣），填公式 =1+2+1+3，備註寫各種人數
  *   工作時間、效率、出勤率、加班的兩個數字、大標題會記在這台電腦的瀏覽器裡。
  *   算出來的列：
  *     假日工作天數     =(46-D12*2)/8
- *     需求人力 On line      =D9/(D12+D13)/(D14+D15)/D16/D19                         量產
- *     需求人力 新機種+重工   =D10/(D12+D13)/(D14+D15)/D17/D19+D11/D12/D14/D18/D19     試產 + 重工（重工不排假日、不加班）
- *     需求人力 Off line(20%) =(D20+D21)*20%
+ *     需求人力 On line      =(D9/D16+D10/D17+D11/D18)/(D12+D13)/(D14+D15)/D19，顯示到小數點第一位
  *     需求人力 TTL          =D20+D21+D22
  *   從「人力」工作表抓的列（第 8 步確認的列和當月那一行，例如 ='人力'!D4）：
  *     現有人力 On line ← Online；Off line ← Off line（直接）
@@ -67,6 +67,7 @@
   var STORE_KEY = IEApp.storeKey('report');
   var MONTHS = XIO.REPORT.months;
   var DEFAULT_WORK_MINUTES = '480';
+  var EFF_VER = 2;            // 效率預設值的版本：預設值改過時加 1，舊的記憶就不沿用
 
   var S = {
     upload: null,         // 上傳的第 8 步檔案 { name, buffer, sheets }
@@ -78,13 +79,17 @@
   var timer = null;
 
   function blank6(v) { var a = []; for (var i = 0; i < MONTHS; i++) a.push(v); return a; }
+  function strings6(list) {
+    list = Array.isArray(list) ? list : [];
+    return blank6('').map(function (v, i) { return list[i] === undefined || list[i] === null ? '' : String(list[i]); });
+  }
 
   // 各月自己輸入、會記住上次的值的列（percent: 輸入的是 %，例如 80 代表 80%）
   var REMEMBERED = [
     { key: 'workMinutes', label: '工作時間（分/天）', what: '工作時間', def: DEFAULT_WORK_MINUTES },
-    { key: 'effMass', label: '綜合效率% - 量產', what: '綜合效率% - 量產', def: '80', percent: true },
-    { key: 'effTrial', label: '綜合效率% - 試產', what: '綜合效率% - 試產', def: '95', percent: true },
-    { key: 'effRework', label: '綜合效率% - 重工', what: '綜合效率% - 重工', def: '95', percent: true },
+    { key: 'effMass', label: '綜合效率% - 量產', what: '綜合效率% - 量產', def: '95', percent: true },
+    { key: 'effTrial', label: '綜合效率% - 試產', what: '綜合效率% - 試產', def: '85', percent: true },
+    { key: 'effRework', label: '綜合效率% - 重工', what: '綜合效率% - 重工', def: '80', percent: true },
     { key: 'attendance', label: '出勤率%', what: '出勤率%', def: '95', percent: true }
   ];
 
@@ -98,8 +103,19 @@
       otRate: s.otRate === undefined ? '' : String(s.otRate),
       yoLimit: s.yoLimit === undefined || s.yoLimit === '' ? String(XIO.YO_LIMIT_DEFAULT) : String(s.yoLimit)
     };
+    // 需求人力 新機種+重工：新機種（名稱 + 各月人數，可增減）、重工各月人數
+    out.newModels = (Array.isArray(s.newModels) ? s.newModels : []).map(function (md) {
+      return { name: md && md.name ? String(md.name) : '', qty: strings6(md && md.qty) };
+    });
+    if (!out.newModels.length) out.newModels.push({ name: '', qty: blank6('') });
+    out.reworkPeople = strings6(s.reworkPeople);
+    // 需求人力 Off line：各種人員的人數（每個月一樣）
+    var off = Array.isArray(s.offline) ? s.offline : [];
+    out.offline = XIO.REPORT_OFFLINE.map(function (c, k) { return off[k] === undefined || off[k] === null ? '' : String(off[k]); });
     REMEMBERED.forEach(function (row) {
-      var saved = Array.isArray(s[row.key]) ? s[row.key].slice(0, MONTHS) : [];
+      // 效率的預設值改過（v5：量產 95、試產 85、重工 80），之前版本記住的效率不沿用
+      var stale = /^eff/.test(row.key) && s.effVer !== EFF_VER;
+      var saved = !stale && Array.isArray(s[row.key]) ? s[row.key].slice(0, MONTHS) : [];
       while (saved.length < MONTHS) saved.push(row.def);
       out[row.key] = saved.map(function (v) { return v === undefined || v === null ? row.def : String(v); });
     });
@@ -107,7 +123,8 @@
   }
   function saveInputs() {
     var i = S.inputs;
-    var keep = { title: i.title, otHours: i.otHours, otRate: i.otRate, yoLimit: i.yoLimit };
+    var keep = { title: i.title, otHours: i.otHours, otRate: i.otRate, yoLimit: i.yoLimit,
+      newModels: i.newModels, reworkPeople: i.reworkPeople, offline: i.offline, effVer: EFF_VER };
     REMEMBERED.forEach(function (row) { keep[row.key] = i[row.key]; });
     try { localStorage.setItem(STORE_KEY, JSON.stringify(keep)); } catch (e) { /* 存不了就算了 */ }
   }
@@ -134,6 +151,14 @@
       out.otHours = num(i.otHours, '每日加班小時');
       out.otRate = num(i.otRate, '加班出勤人數 %', true);
       out.yoLimit = num(i.yoLimit, 'YO 加班上限');
+      out.newModels = i.newModels.map(function (md, k) {
+        var name = String(md.name || '').trim();
+        return { name: name, qty: md.qty.map(function (v, m) {
+          return num(v, monthName(m) + '的新機種「' + (name || '第 ' + (k + 1) + ' 個') + '」人數');
+        }) };
+      });
+      out.reworkPeople = i.reworkPeople.map(function (v, m) { return num(v, monthName(m) + '的重工人數'); });
+      out.offline = XIO.REPORT_OFFLINE.map(function (c, k) { return num(i.offline[k], '需求人力 Off line 的' + c + '人數'); });
       if (out.yoLimit === null) throw new Error('請輸入 YO 加班上限（小時）。');
     } catch (e) {
       return { error: e.message };
@@ -145,6 +170,13 @@
       if (miss) blanks.push('有 ' + miss + ' 個月沒有' + row.what + '。');
     });
     if (out.otHours === null || out.otRate === null) blanks.push('每日加班小時和加班出勤人數 % 都輸入後，才會填加班時間。');
+    var anyNew = out.newModels.some(function (md) { return md.qty.some(function (v) { return v !== null; }); }) ||
+      out.reworkPeople.some(function (v) { return v !== null; });
+    if (!anyNew) blanks.push('需求人力「新機種+重工」還沒輸入人數，這一列先留空白。');
+    out.newModels.forEach(function (md, k) {
+      if (!md.name && md.qty.some(function (v) { return v !== null; })) blanks.push('第 ' + (k + 1) + ' 個新機種有人數但沒有名稱，備註會寫成「新機種' + (k + 1) + '」。');
+    });
+    if (!out.offline.some(function (v) { return v !== null; })) blanks.push('需求人力「Off line」還沒輸入人數，這一列先留空白。');
     if (missWd) blanks.push('平日工作天數沒填的月份，需求人力會是 #DIV/0!。');
     out.title = String(i.title || '').trim() || XIO.REPORT_TITLE_DEFAULT;
     return { values: out, blanks: blanks };
@@ -301,7 +333,7 @@
         els.srcMsg),
       h('li', { class: 'task' },
         h('h2', { text: '輸入各月的數值' }),
-        h('p', { class: 'hint', text: '平日工作天數每個月都要輸入；工作時間預設 480 分，綜合效率預設 80%（量產）、95%（試產）、95%（重工），出勤率預設 95%，會記住上次輸入的值。假日工作天數會用公式自動算：（法定加班上限 46 小時 − 平日工作天數 × 每天加班 2 小時）÷ 8。加班時間 = 每日加班小時 × 60 × 加班出勤人數 %。需求人力 Off line =（On line + 新機種+重工）× 20%。' }),
+        h('p', { class: 'hint', text: '平日工作天數每個月都要輸入；工作時間預設 480 分，綜合效率預設 95%（量產）、85%（試產）、80%（重工），出勤率預設 95%，之後都用上次輸入的值。假日工作天數會用公式自動算：（法定加班上限 46 小時 − 平日工作天數 × 每天加班 2 小時）÷ 8。加班時間 = 每日加班小時 × 60 × 加班出勤人數 %。需求人力的「新機種+重工」和「Off line」輸入人數，加總填入，明細寫在備註。' }),
         els.entry),
       h('li', { class: 'task' },
         h('h2', { text: '總表' }),
@@ -353,12 +385,65 @@
       (function () { var el = input(inp.otRate, '加班出勤人數 %', function (v) { inp.otRate = v; }, 'in-tiny'); el.id = 'f9-ot-rate'; return el; })(),
       h('span', { text: '%' })));
 
+    // 需求人力 新機種+重工：各新機種各月幾人（可以增減機種）+ 重工各月幾人
+    var nhead = h('tr', null, h('th', { scope: 'col', text: '新機種 / 重工' }));
+    for (var nm = 0; nm < MONTHS; nm++) {
+      var nth = h('th', { scope: 'col', text: monthName(nm) });
+      els.monthHeads.push(nth);
+      nhead.appendChild(nth);
+    }
+    nhead.appendChild(h('th', { scope: 'col' }));
+    var nbody = h('tbody');
+    inp.newModels.forEach(function (md, k) {
+      var nameEl = h('input', { type: 'text', class: 'in entry-name', autocomplete: 'off', value: md.name,
+        placeholder: '新機種名稱', 'aria-label': '第 ' + (k + 1) + ' 個新機種名稱' });
+      nameEl.addEventListener('input', function () { md.name = nameEl.value; onType(); });
+      var tr = h('tr', null, h('th', { scope: 'row' }, nameEl));
+      md.qty.forEach(function (v, i) {
+        tr.appendChild(h('td', null, input(v, (md.name || '新機種') + '，' + monthName(i) + '人數', function (val) { md.qty[i] = val; })));
+      });
+      tr.appendChild(h('td', null, h('button', { type: 'button', class: 'btn-link', text: '刪除',
+        onclick: function () { inp.newModels.splice(k, 1); if (!inp.newModels.length) inp.newModels.push({ name: '', qty: blank6('') }); rebuildEntry(); } })));
+      nbody.appendChild(tr);
+    });
+    var rtr = h('tr', null, h('th', { scope: 'row', text: '重工' }));
+    inp.reworkPeople.forEach(function (v, i) {
+      rtr.appendChild(h('td', null, input(v, '重工，' + monthName(i) + '人數', function (val) { inp.reworkPeople[i] = val; })));
+    });
+    rtr.appendChild(h('td'));
+    nbody.appendChild(rtr);
+    els.entry.appendChild(h('h3', { class: 'entry-title', text: '需求人力「新機種+重工」（人）' }));
+    els.entry.appendChild(h('div', { class: 'entry-scroll' },
+      h('table', { class: 'entry' }, h('thead', null, nhead), nbody)));
+    els.entry.appendChild(h('div', { class: 'link-row' },
+      h('button', { type: 'button', class: 'btn-link', text: '＋ 新增機種',
+        onclick: function () { inp.newModels.push({ name: '', qty: blank6('') }); rebuildEntry(); } })));
+
+    // 需求人力 Off line：各種人員的人數（每個月一樣）
+    var offRow = h('div', { class: 'field-row entry-ot' }, h('span', { class: 'field-label', text: '需求人力「Off line」（每個月一樣）：' }));
+    XIO.REPORT_OFFLINE.forEach(function (cat, k) {
+      var id = 'f9-off-' + k;
+      var el = input(inp.offline[k], '需求人力 Off line ' + cat + ' 人數', function (v) { inp.offline[k] = v; }, 'in-tiny');
+      el.id = id;
+      offRow.appendChild(h('label', { for: id, class: 'entry-cat', text: cat }));
+      offRow.appendChild(el);
+    });
+    els.entry.appendChild(offRow);
+
     // 第二張表：YO 加班上限
     els.entry.appendChild(h('div', { class: 'field-row entry-ot' },
       h('label', { for: 'f9-yo-limit', text: 'YO 加班上限（第二張表）：' }),
       (function () { var el = input(inp.yoLimit, 'YO 加班上限幾小時', function (v) { inp.yoLimit = v; }, 'in-tiny'); el.id = 'f9-yo-limit'; return el; })(),
       h('span', { text: '小時/人（預設 ' + XIO.YO_LIMIT_DEFAULT + '）' })));
 
+  }
+
+  // 新增、刪除機種後整個輸入區重畫
+  function rebuildEntry() {
+    els.entry.textContent = '';
+    els.monthHeads = [];
+    buildEntry();
+    onType();
   }
 
   function onType() {
@@ -456,7 +541,7 @@
 
     var work = S.work;
     // 輸入表的月份表頭
-    els.monthHeads.forEach(function (th, m) { th.textContent = monthName(m); });
+    els.monthHeads.forEach(function (th, m) { th.textContent = monthName(m % MONTHS); });   // 有兩個輸入表，各有六個月
     var read = readInputs();
     if (read.error) { setSummary(read.error, true); return; }
     // 每次都照目前的輸入重新產生總表（給預覽用）

@@ -2015,13 +2015,15 @@
   var OVERTIME_LIMIT = 46;     // 法定加班上限（小時/人/月）
   var WEEKDAY_OT_HOURS = 2;    // 平日每天加班 2 小時
   var DAY_HOURS = 8;           // 一天工作 8 小時
-  var OFFLINE_RATE = 20;       // 需求人力 Off line =（On line + 新機種+重工）× 20%
+  var OFFLINE_RATE = 20;       // 只用在列名稱「Off line(20%)」
+  // 需求人力 Off line 的人員種類（每個月人數一樣，畫面上輸入，加總填入；之後要增減種類改這裡）
+  var REPORT_OFFLINE = ['領班', '物料（含材製損）', '文書', '包裝'];
   var YO_LIMIT_DEFAULT = 78;   // 第二張表：YO 加班上限（小時/人/月），畫面上可以改
   var REPORT_SECOND_OFFSET = 28;   // 第二張表在第一張下面空三列（第一張到第 28 列，第二張的紅色格子在第 32 列）
   // 第二張表直接參照第一張表的列（其他列是第二張表自己算）
   var REPORT_SECOND_COPY = ['mpsMass', 'mpsTrial', 'mpsRma', 'hoursMass', 'hoursTrial', 'hoursRework',
     'weekdays', 'workMinutes', 'overtimeMinutes', 'effMass', 'effTrial', 'effRework', 'attendance',
-    'haveOnline', 'haveOffline'];
+    'needNewRework', 'needOffline', 'haveOnline', 'haveOffline'];
   function isNum(v) { return typeof v === 'number' && !isNaN(v); }
   var REPORT_COLOR = {
     red: 'FFFF0000',       // 法定加班上限
@@ -2140,6 +2142,9 @@
    *                effMass / effTrial / effRework / attendance   [6 個月的 %]（例如 80 代表 80%，存成 0.8）
    *                otHours      每日加班幾小時
    *                otRate       加班出勤人數 %（例如 80 代表 80%）
+   *                newModels    需求人力 新機種+重工 的新機種 [{ name, qty: [6 個月的人數] }]
+   *                reworkPeople 需求人力 新機種+重工 的重工 [6 個月的人數]
+   *                offline      需求人力 Off line 各種人員的人數，順序同 REPORT_OFFLINE（每個月一樣）
    * o.yoLimit    第二張表（第 32 列起）的 YO 加班上限，預設 78
    * 回傳 { worksheet, rows: { hoursMass: 9, … }, rows2, monthCol, months }
    */
@@ -2295,24 +2300,15 @@
         var d = n('weekdays') + n('holidays');
         var t = n('workMinutes') + n('overtimeMinutes');
 
-        // 需求人力 On line（量產）= 需求工時-量產 ÷（平日+假日天數）÷（工作時間+加班時間）÷ 量產效率 ÷ 出勤率
+        // 需求人力 On line =（量產工時 ÷ 量產效率 + 試產工時 ÷ 試產效率 + 重工工時 ÷ 重工效率）
+        //                   ÷（平日+假日天數）÷（工作時間+加班時間）÷ 出勤率
         setFormula(cellOf(rows, 'needOnline', m),
-          a('hoursMass') + '/' + days + '/' + mins + '/' + a('effMass') + '/' + a('attendance'),
-          n('hoursMass') / d / t / n('effMass') / n('attendance'), '#,##0.0');
+          '(' + a('hoursMass') + '/' + a('effMass') + '+' + a('hoursTrial') + '/' + a('effTrial') + '+' +
+          a('hoursRework') + '/' + a('effRework') + ')/' + days + '/' + mins + '/' + a('attendance'),
+          (n('hoursMass') / n('effMass') + n('hoursTrial') / n('effTrial') + n('hoursRework') / n('effRework')) /
+            d / t / n('attendance'), '0.0');
 
-        // 新機種+重工：
-        //   試產 需求工時 ÷（平日+假日天數）÷（工作時間+加班時間）÷ 試產效率 ÷ 出勤率
-        //   重工 需求工時 ÷ 平日天數 ÷ 工作時間 ÷ 重工效率 ÷ 出勤率（重工不排假日、不加班）
-        setFormula(cellOf(rows, 'needNewRework', m),
-          a('hoursTrial') + '/' + days + '/' + mins + '/' + a('effTrial') + '/' + a('attendance') + '+' +
-          a('hoursRework') + '/' + a('weekdays') + '/' + a('workMinutes') + '/' + a('effRework') + '/' + a('attendance'),
-          n('hoursTrial') / d / t / n('effTrial') / n('attendance') +
-          n('hoursRework') / n('weekdays') / n('workMinutes') / n('effRework') / n('attendance'), '#,##0.0');
-
-        // Off line =（On line + 新機種+重工）× 20%
-        setFormula(cellOf(rows, 'needOffline', m),
-          '(' + a('needOnline') + '+' + a('needNewRework') + ')*' + OFFLINE_RATE + '%',
-          (n('needOnline') + n('needNewRework')) * OFFLINE_RATE / 100, '#,##0.0');
+        // 新機種+重工、Off line 是畫面上輸入的人數（第一張表填好，第二張表參照第一張）
 
         // TTL
         setFormula(cellOf(rows, 'needTotal', m), a('needOnline') + '+' + a('needNewRework') + '+' + a('needOffline'),
@@ -2325,7 +2321,6 @@
         setFormula(cellOf(rows, 'gap', m), a('haveTotal') + '-' + a('needTotal'), hv - nv, '#,##0.0');
         setFormula(cellOf(rows, 'loading', m), a('haveTotal') + '/' + a('needTotal'), nv ? hv / nv : NaN, '0%');
       }
-      setNote(rows, 'needOffline', '(On line + 新機種+重工) × ' + OFFLINE_RATE + '%');
     }
 
     /* ===== 第一張表：法定加班上限 46 小時 ===== */
@@ -2393,6 +2388,29 @@
     if (isNum(inp.otHours) || isNum(inp.otRate)) {
       setNote(rows, 'overtimeMinutes', '每日加班 ' + (isNum(inp.otHours) ? inp.otHours : '?') +
         ' 小時 × 60 × 加班出勤人數 ' + (isNum(inp.otRate) ? inp.otRate : '?') + '%');
+    }
+
+    // 需求人力 新機種+重工：各新機種 + 重工的人數相加，例如 =2+3+1；備註寫是哪些機種
+    var models = (inp.newModels || []).filter(function (md) { return md && (md.name || (md.qty || []).some(isNum)); });
+    var rework = inp.reworkPeople || [];
+    for (m = 0; m < R.months; m++) {
+      var parts = models.map(function (md) { return md.qty ? md.qty[m] : null; }).concat([rework[m]]);
+      if (!parts.some(isNum)) continue;
+      var nums = parts.map(function (v) { return isNum(v) ? v : 0; });
+      setFormula(cellOf(rows, 'needNewRework', m), nums.join('+'), nums.reduce(function (x, y) { return x + y; }, 0), 'General');
+    }
+    if (models.length || rework.some(isNum)) {
+      var names = models.map(function (md, k) { return md.name || ('新機種' + (k + 1)); });
+      setNote(rows, 'needNewRework', '各月人數 = ' + names.concat(['重工']).join(' + '));
+    }
+
+    // 需求人力 Off line：各種人員的人數相加（每個月一樣），例如 =1+2+1+3；備註寫各種人數
+    var offCounts = inp.offline || [];
+    if (offCounts.some(isNum)) {
+      var offNums = REPORT_OFFLINE.map(function (c, k) { return isNum(offCounts[k]) ? offCounts[k] : 0; });
+      var offTotal = offNums.reduce(function (x, y) { return x + y; }, 0);
+      for (m = 0; m < R.months; m++) setFormula(cellOf(rows, 'needOffline', m), offNums.join('+'), offTotal, 'General');
+      setNote(rows, 'needOffline', REPORT_OFFLINE.map(function (c, k) { return c + ' ' + offNums[k]; }).join('、'));
     }
 
     fillComputed(rows, OVERTIME_LIMIT);
@@ -2617,7 +2635,7 @@
   }
 
   var ExcelIO = {
-    VERSION: 4,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
+    VERSION: 5,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
     colToNum: colToNum,
     numToCol: numToCol,
     normalizeText: normalizeText,
@@ -2667,6 +2685,7 @@
     REPORT_LINKS: REPORT_LINKS,
     REPORT_TITLE_DEFAULT: REPORT_TITLE_DEFAULT,
     OFFLINE_RATE: OFFLINE_RATE,
+    REPORT_OFFLINE: REPORT_OFFLINE,
     YO_LIMIT_DEFAULT: YO_LIMIT_DEFAULT,
     RMA_SHEET: RMA_SHEET,
     RMA_LAYOUT: RMA_LAYOUT,
