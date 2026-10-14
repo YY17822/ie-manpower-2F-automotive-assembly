@@ -341,6 +341,7 @@
 
     var sp = statusPos();
     if (!sp || sp > n0) { setSummary('選擇 Status 在哪一行。'); return; }
+    ui.statusCol.set(XIO.numToCol(sp));       // 第 2 步、第 6 步共用
 
     var parts = S.reports.map(function (R, i) {
       return { ws: R.ws, values: ready[i].values, keepCols: ready[i].cols, lastRow: R.info.lastRow };

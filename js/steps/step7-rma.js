@@ -400,7 +400,7 @@
     var first = plan.startRow + 1;
     var last = plan.startRow + read.items.length;
     setSummary('RMA 會填在 ' + S.work.main.name + ' 工作表的第 ' + plan.startRow + ' 到 ' + last +
-      ' 列（Others 總需求工時在第 ' + plan.restRow + ' 列，空一列），共 ' + read.items.length + ' 個項目。');
+      ' 列（需求工時匯總的最後一列是第 ' + plan.restRow + ' 列，空一列），共 ' + read.items.length + ' 個項目。');
 
     renderResult(plan, read.items, first, last);
     els.exportBtn.disabled = false;

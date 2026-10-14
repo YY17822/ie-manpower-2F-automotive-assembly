@@ -15,7 +15,7 @@
     { id: 'p003-import', title: '匯入 P003 標準工時', note: '加到同一個檔案' },
     { id: 'ct-lookup', title: '帶入標準工時 CT.', note: '用料號到 P003 查工時' },
     { id: 'demand-hours', title: '計算需求工時', note: '各月產量 × CT.' },
-    { id: 'summary', title: '需求工時匯總', note: '每月總工時、前三大料號' },
+    { id: 'summary', title: '需求工時匯總', note: '每月總工時、量產／試產' },
     { id: 'rma', title: 'RMA 需求工時', note: '重工數量 × CT.' },
     { id: 'manpower', title: '匯入人力報表', note: '未來六個月的人力預計' },
     { id: 'report', title: '總表', note: '各月人力需求總覽' },

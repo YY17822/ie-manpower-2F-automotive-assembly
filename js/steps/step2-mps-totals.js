@@ -17,7 +17,7 @@
  *
  *   WIP 和六個月各在哪一行由使用者指定，和第 5 步（計算需求工時）共用同一組設定，
  *   在其中一步改了，另一步也會跟著變，避免兩邊對不起來。
- *   Status 在哪一行：預設用第 1 步指定的；這一步改了會記住。
+ *   Status 在哪一行：和第 1 步、第 6 步共用同一個設定（第 1 步指定，這裡改了另外兩步也跟著變）。
  *
  *   來源有兩種：
  *     a. 剛才第 1 步篩選好的結果（不用先匯出，直接沿用）
@@ -37,8 +37,8 @@
   var STEP1_KEY = IEApp.storeKey('step1');
   var REF_SHEET = 'P003';
   var LABELS = { total: 'Total' };
-  // Status 等於 key 的列算進這一組（不分大小寫）
-  var GROUPS = [{ key: 'M', label: '量產' }, { key: 'R', label: '試產' }];
+  // Status 等於 key 的列算進這一組（不分大小寫）：M = 量產、R = 試產（和第 6 步共用）
+  var GROUPS = XIO.STATUS_GROUPS;
   var STATUS_GUESS = /status|狀態/i;
   var SUFFIX = '_匯總';
   var KEY_COL = 1;              // 料號在第 1 行
@@ -61,16 +61,17 @@
     var shared = ui.columns.get();          // WIP、月份的行和第 5 步共用
     settings = {
       startRow: s.startRow === undefined ? '' : s.startRow,
-      statusCol: s.statusCol === undefined ? '' : String(s.statusCol),
+      statusCol: ui.statusCol.get(),
       wipCol: shared.wipCol,
       monthCols: shared.monthCols
     };
   }
   function saveSettings() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ startRow: settings.startRow, statusCol: settings.statusCol }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ startRow: settings.startRow }));
     } catch (e) { /* 存不了就算了 */ }
     ui.columns.set({ wipCol: settings.wipCol, monthCols: settings.monthCols });
+    ui.statusCol.set(settings.statusCol);
   }
 
   function isRefName(name) { return String(name).toLowerCase() === REF_SHEET.toLowerCase(); }
@@ -109,16 +110,6 @@
     return n >= 1 ? n : 5;
   }
 
-  // Status 在哪一行：這一步改過就用這一步的；沒有的話用第 1 步指定的
-  function step1StatusCol(cols) {
-    var src = activeSource();
-    if (src && src.kind === 'prev' && src.prev.statusCol && src.prev.statusCol <= cols) return src.prev.statusCol;
-    try {
-      var s1 = JSON.parse(localStorage.getItem(STEP1_KEY) || '{}') || {};
-      return colOf(s1.statusCol, cols);
-    } catch (e) { return 0; }
-  }
-
   function colOf(letter, max) {
     var p = XIO.parseColumns(letter || '');
     return p.cols.length === 1 && !p.bad.length && p.cols[0] <= max ? p.cols[0] : 0;
@@ -127,7 +118,7 @@
   /* ---------- 畫面 ---------- */
   function render(panel) {
     els = {};
-    loadSettings();
+    loadSettings();     // 每次進來都重讀：WIP、月份、Status 可能在別的步驟改過
 
     els.srcInfo = h('p', { class: 'source-line', 'aria-live': 'polite' });
     els.drop = ui.fileDrop({
@@ -180,7 +171,7 @@
           h('label', { for: 'ft-status', text: 'Status 在' }), els.statusCol,
           h('label', { for: 'ft-wip', text: '當月 WIP 在' }), els.wipCol,
           h('label', { for: 'ft-months', text: '各月產量在' }), els.monthCols),
-        h('p', { class: 'hint', text: 'Status 預設是第 1 步指定的那一行：M 算量產、R 算試產。' }),
+        h('p', { class: 'hint', text: 'Status 預設是第 1 步指定的那一行，和第 6 步共用：M 算量產、R 算試產。' }),
         h('p', { class: 'hint', text: '各月產量的第一行是當月，會先加上 WIP 再算；連續的行可以寫成 E:J，也可以點下面表格最上方的行號來選。這裡的設定和第 5 步（計算需求工時）共用。' }),
         els.mainPreview,
         h('details', { class: 'advanced' },
@@ -366,8 +357,8 @@
       for (var c = MONTH_FIRST; c < MONTH_FIRST + MONTH_COUNT && c <= cols; c++) monthCols.push(c);
     }
 
-    // Status：這一步選過的 → 第 1 步指定的 → 表頭有「Status」的那一行
-    var statusCol = colOf(settings.statusCol, cols) || step1StatusCol(cols);
+    // Status：共用設定（第 1 步指定的）→ 表頭有「Status」的那一行
+    var statusCol = colOf(settings.statusCol, cols);
     if (!statusCol) {
       for (var g = 1; g <= cols; g++) if (STATUS_GUESS.test(labels[g] || '')) { statusCol = g; break; }
     }

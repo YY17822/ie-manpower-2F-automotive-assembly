@@ -1354,30 +1354,42 @@
    *   counts      各組有幾列料號（陣列，和 groups 同順序）
    *   others      Status 不是任何一組的列 [{ row, label, status }]（不算進量產、試產，只算進 Total）
    */
+  // Status 分組：M 算量產、R 算試產（不分大小寫）。第 2 步（產量匯總）和第 6 步（需求工時匯總）共用。
+  var STATUS_GROUPS = [{ key: 'M', label: '量產' }, { key: 'R', label: '試產' }];
+
   function statusKey(v) {
     v = plainValue(v);
     if (v === null || v === undefined) return '';
     return normalizeText(v).toUpperCase();
   }
 
-  function planMpsTotals(main, o) {
-    var lastRow = lastKeyRow(main, o.keyCol, o.dataStartRow);
-    if (!lastRow) return { found: false };
-    var groups = o.groups || [];
-    var groupOf = {};          // 列號 -> 第幾組（-1 = 不屬於任何一組）
+  // 每一列屬於哪一組：回傳 { groupOf: { 列號: 第幾組（-1 = 都不是） }, counts: [各組列數], others: [{ row, label, status }] }
+  // 沒有指定 Status 的行（o.statusCol）時，每一列都當作「都不是」。
+  function statusGroupsOf(main, o, lastRow, groups) {
+    var groupOf = {};
     var counts = groups.map(function () { return 0; });
     var others = [];
     for (var r = o.dataStartRow; r <= lastRow; r++) {
       var row = main.findRow(r);
       var keyCell = row ? row.findCell(o.keyCol) : null;
       if (!keyCell || normalizeText(displayText(keyCell)) === '') { groupOf[r] = -1; continue; }
-      var sk = statusKey(cellRawValue(row.findCell(o.statusCol)));
+      var statusCell = o.statusCol ? row.findCell(o.statusCol) : null;
+      var sk = statusKey(cellRawValue(statusCell));
       var g = -1;
       groups.forEach(function (gr, k) { if (g < 0 && sk === statusKey(gr.key)) g = k; });
       groupOf[r] = g;
       if (g >= 0) counts[g]++;
-      else others.push({ row: r, label: displayText(keyCell), status: displayText(row.findCell(o.statusCol)) });
+      else others.push({ row: r, label: displayText(keyCell), status: statusCell ? displayText(statusCell) : '' });
     }
+    return { groupOf: groupOf, counts: counts, others: others };
+  }
+
+  function planMpsTotals(main, o) {
+    var lastRow = lastKeyRow(main, o.keyCol, o.dataStartRow);
+    if (!lastRow) return { found: false };
+    var groups = o.groups || STATUS_GROUPS;
+    var sg = statusGroupsOf(main, o, lastRow, groups);
+    var groupOf = sg.groupOf, counts = sg.counts, others = sg.others;
     var months = o.monthCols.map(function (c, i) {
       var error = null;
       var total = 0;
@@ -1422,7 +1434,7 @@
     var S = numToCol(o.statusCol);
     var statusRange = '$' + S + '$' + first + ':$' + S + '$' + last;
     var out = [i === 0 ? 'SUM(' + wipRange + ')+SUM(' + range + ')' : 'SUM(' + range + ')'];
-    (o.groups || []).forEach(function (gr) {
+    (o.groups || STATUS_GROUPS).forEach(function (gr) {
       var crit = '"' + String(gr.key).replace(/"/g, '""') + '"';
       out.push(i === 0
         ? 'SUMIF(' + statusRange + ',' + crit + ',' + wipRange + ')+SUMIF(' + statusRange + ',' + crit + ',' + range + ')'
@@ -1452,7 +1464,7 @@
     var plan = planMpsTotals(main, o);
     if (!plan.found) return plan;
     var rows = plan.rows;
-    var texts = [o.labels.total].concat((o.groups || []).map(function (gr) { return gr.label; }));
+    var texts = [o.labels.total].concat((o.groups || STATUS_GROUPS).map(function (gr) { return gr.label; }));
     var leftCol = plan.labelCol || Math.min.apply(null, o.monthCols);
     var rightCol = Math.max.apply(null, o.monthCols);
     var inMonth = {};
@@ -1519,18 +1531,8 @@
     return plan;
   }
 
-  /* ---------- 需求工時匯總：每月總需求工時、前三大、其他 ---------- */
+  /* ---------- 需求工時匯總：每月總需求工時、量產、試產 ---------- */
 
-  var TOP_FILL_ARGB = 'FFFFD8A8';     // 淺橘色
-
-  // 新的條件式格式規則要用的優先順序：接在這張工作表現有規則的後面
-  function nextPriority(ws) {
-    var max = 0;
-    (ws.conditionalFormattings || []).forEach(function (cf) {
-      (cf.rules || []).forEach(function (rule) { if (rule.priority > max) max = rule.priority; });
-    });
-    return max + 1;
-  }
   var HEAD_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFA2D2FF' } };   // 淺藍色（#A2D2FF）：Production、RMA 這兩列的底色
   var LABEL_WIDTH = 26;               // 文字標籤那一行至少要多寬，才放得下「Production 總需求工時」
 
@@ -1549,18 +1551,21 @@
    * 先算出匯總結果，不動工作表（給畫面預覽用）。
    *
    * o.dataStartRow  資料從第幾列開始
-   * o.keyCol        料號在哪一行（用來判斷資料到第幾列、以及顯示前三大是誰）
+   * o.keyCol        料號在哪一行（用來判斷資料到第幾列）
    * o.title         需求工時那一塊的大表頭文字，用來找出它在哪幾行
-   * o.topN          前幾大（預設 3）
+   * o.statusCol     Status 在哪一行（量產、試產用這一行分）；只是要找位置時可以省略
+   * o.groups        分組（預設 M = 量產、R = 試產）
    *
    * 回傳：
    *   found       有沒有找到需求工時那一塊
    *   startCol / width   需求工時從哪一行開始、共幾行（幾個月）
    *   firstRow / lastRow 資料的第一列、最後一列
-   *   totalRow / topRow / restRow  三個匯總列的列號（最後一列資料之後空一列開始）
+   *   totalRow    Production 那一列；groupRows[k] 是各組那一列（Total 下面依序往下）
+   *   rows        [totalRow, groupRows…]
+   *   restRow     匯總的最後一列（RMA 區塊接在它下面空一列）
    *   labelCol    匯總列的文字標籤放在哪一行（需求工時左邊那一行）
-   *   months      [{ col, header, total, top, rest, error, topRows: [{ row, label, value }] }]
-   *               topRows 只列數值大於 0 的
+   *   months      [{ col, header, total, groups: [各組合計], error }]
+   *   counts / others   各組有幾列、Status 都不是的列（和 planMpsTotals 一樣）
    */
   function planSummary(main, o) {
     var headerEnd = o.dataStartRow - 1;
@@ -1568,76 +1573,80 @@
     if (!block) return { found: false };
     var lastRow = lastKeyRow(main, o.keyCol, o.dataStartRow);
     if (!lastRow) return { found: true, startCol: block.col, width: block.width, months: [], firstRow: 0, lastRow: 0 };
-    var topN = o.topN || 3;
+    var groups = o.groups || STATUS_GROUPS;
+    var sg = statusGroupsOf(main, o, lastRow, groups);
     var subRow = headerEnd >= 3 ? 3 : headerEnd;
 
     var months = [];
     for (var c = block.col; c < block.col + block.width; c++) {
-      var items = [];
       var error = null;
+      var total = 0;
+      var sums = groups.map(function () { return 0; });
       for (var r = o.dataStartRow; r <= lastRow; r++) {
         var row = main.findRow(r);
-        var cell = row ? row.findCell(c) : null;
-        var v = numberOrError(cell);
+        var v = numberOrError(row ? row.findCell(c) : null);
         if (v.error) { if (!error) error = v.error; continue; }
-        var keyCell = row ? row.findCell(o.keyCol) : null;
-        items.push({ row: r, label: keyCell ? displayText(keyCell) : '', value: v.value });
+        total += v.value;
+        if (sg.groupOf[r] >= 0) sums[sg.groupOf[r]] += v.value;
       }
-      var total = 0;
-      items.forEach(function (it) { total += it.value; });
-      // 前幾大：數值是 0（或負數）的不算，免得一堆 0 也被當成前三大
-      var sorted = items.filter(function (it) { return it.value > 0; })
-        .sort(function (a, b) { return b.value - a.value || a.row - b.row; });
-      var topRows = sorted.slice(0, topN);
-      var top = 0;
-      topRows.forEach(function (it) { top += it.value; });
       var headCell = subRow >= 1 ? main.findCell(subRow, c) : null;
-      months.push({
-        col: c, header: headCell ? displayText(headCell) : '',
-        total: total, top: top, rest: total - top, error: error, topRows: topRows
-      });
+      months.push({ col: c, header: headCell ? displayText(headCell) : '', total: total, groups: sums, error: error });
     }
 
+    var totalRow = lastRow + 2;
+    var groupRows = groups.map(function (gr, k) { return totalRow + 1 + k; });
+    var rows = [totalRow].concat(groupRows);
     return {
       found: true,
       startCol: block.col,
       width: block.width,
       firstRow: o.dataStartRow,
       lastRow: lastRow,
-      totalRow: lastRow + 2,
-      topRow: lastRow + 3,
-      restRow: lastRow + 4,
+      totalRow: totalRow,
+      groupRows: groupRows,
+      rows: rows,
+      restRow: rows[rows.length - 1],
       labelCol: block.col > 1 ? block.col - 1 : 0,
-      months: months
+      months: months,
+      counts: sg.counts,
+      others: sg.others
     };
   }
 
+  // 需求工時匯總各列的公式（不含開頭的 =）：[Production, 各組…]
+  function summaryFormulas(plan, o, m) {
+    var L = numToCol(m.col);
+    var range = L + plan.firstRow + ':' + L + plan.lastRow;
+    var S = numToCol(o.statusCol);
+    var statusRange = '$' + S + '$' + plan.firstRow + ':$' + S + '$' + plan.lastRow;
+    return ['SUM(' + range + ')'].concat((o.groups || STATUS_GROUPS).map(function (gr) {
+      return 'SUMIF(' + statusRange + ',"' + String(gr.key).replace(/"/g, '""') + '",' + range + ')';
+    }));
+  }
+
   /*
-   * 把匯總寫進工作表（最後一列資料之後空一列開始，共三列），每格都是公式：
+   * 把匯總寫進工作表（最後一列資料之後空一列開始，共三列），每格都是公式。
+   * 以 Status 在 C 行、需求工時在 N 行、資料在第 5 到 74 列為例：
    *   Production 總需求工時   =SUM(N5:N74)
-   *   Top 3 總需求工時        =LARGE(N5:N74,1)+LARGE(N5:N74,2)+LARGE(N5:N74,3)
-   *   Others 總需求工時       =N76-N77          （Production − Top 3）
+   *   量產總需求工時          =SUMIF($C$5:$C$74,"M",N5:N74)
+   *   試產總需求工時          =SUMIF($C$5:$C$74,"R",N5:N74)
    *
-   * 外觀：文字標籤放在需求工時左邊那一行、置中；標籤加上各月共七行、三列圍成一塊，
+   * 外觀：文字標籤放在需求工時左邊那一行、置中；標籤加上各月圍成一塊，
    *       外框粗線、裡面細格線。Production 那一列整列是淺藍色底（#A2D2FF）。
+   * 不再標示前三大（舊版加在需求工時上的淺橘色條件式格式，重做時會拿掉）。
    *
-   * 每個月前三大的儲存格用「條件式格式」標上淺橘色：數值改了，標示會跟著變。
-   * 規則是「大於 0，而且不小於該月第三大的數值」，所以 0 不會被標示。
-   *
-   * o.labels = { total, top, rest }  三列的文字標籤
+   * o.labels = { total, groups: [各組的標籤] }
    * 其餘參數和 planSummary 一樣，回傳的也是同一份結果。
    */
   function addSummaryRows(main, o) {
     var plan = planSummary(main, o);
     if (!plan.found || !plan.lastRow) return plan;
-    var dataRows = plan.lastRow - plan.firstRow + 1;
-    var topN = Math.min(o.topN || 3, dataRows);
     var endCol = plan.startCol + plan.width - 1;
     var leftCol = plan.labelCol || plan.startCol;       // 整塊最左邊那一行
-    var rows = [plan.totalRow, plan.topRow, plan.restRow];
-    var texts = [o.labels.total, o.labels.top, o.labels.rest];
+    var rows = plan.rows;
+    var texts = [o.labels.total].concat(o.labels.groups);
 
-    // 重做時，先把這三列原本的內容清掉。只清這一塊的行，同一列左邊可能有 MPS 的匯總。
+    // 重做時，先把這幾列原本的內容清掉。只清這一塊的行，同一列左邊可能有 MPS 的匯總。
     rows.forEach(function (r) {
       var row = main.findRow(r);
       if (!row) return;
@@ -1663,23 +1672,15 @@
     if (font) delete font.bold;
 
     plan.months.forEach(function (m) {
-      var L = numToCol(m.col);
-      var range = L + plan.firstRow + ':' + L + plan.lastRow;
-      var large = [];
-      for (var k = 1; k <= topN; k++) large.push('LARGE(' + range + ',' + k + ')');
-      var formulas = [
-        'SUM(' + range + ')',
-        large.join('+'),
-        L + plan.totalRow + '-' + L + plan.topRow
-      ];
-      var results = m.error ? [{ error: m.error }, { error: m.error }, { error: m.error }] : [m.total, m.top, m.rest];
+      var formulas = summaryFormulas(plan, o, m);
+      var results = [m.total].concat(m.groups);
       rows.forEach(function (r, i) {
         var cell = main.getCell(r, m.col);
         var style = { numFmt: INTEGER_FORMAT, border: boxBorder(r, m.col), alignment: { vertical: 'middle' } };
         if (font) style.font = font;
         if (i === 0) style.fill = HEAD_FILL;                   // Production 那一列
         cell.style = style;
-        cell.value = { formula: formulas[i], result: results[i] };
+        cell.value = { formula: formulas[i], result: m.error ? { error: m.error } : results[i] };
       });
     });
 
@@ -1697,25 +1698,10 @@
       if (!labelColumn.width || labelColumn.width < LABEL_WIDTH) labelColumn.width = LABEL_WIDTH;
     }
 
-    // 前三大標淺橘色：先拿掉之前加在這一塊的規則，再加一條涵蓋所有月份的規則。
-    // 公式寫的是左上角那一格（例如 N5），Excel 會自動套用到範圍裡的每一格：
-    //   =AND(N5>0, N5>=LARGE(N$5:N$74,3))    大於 0，而且不小於這個月第三大的數值
-    var blockRef = function (ref) {
-      var m = /^([A-Z]+)\d+:([A-Z]+)\d+$/.exec(String(ref || ''));
-      return !!m && colToNum(m[1]) >= plan.startCol && colToNum(m[2]) <= endCol;
-    };
+    // 舊版在需求工時上加的「前三大淺橘色」條件式格式，重做時拿掉
     main.conditionalFormattings = (main.conditionalFormattings || []).filter(function (cf) {
-      return !blockRef(cf.ref);
-    });
-    var firstL = numToCol(plan.startCol), lastL = numToCol(endCol);
-    main.addConditionalFormatting({
-      ref: firstL + plan.firstRow + ':' + lastL + plan.lastRow,
-      rules: [{
-        type: 'expression', priority: nextPriority(main),
-        formulae: ['AND(' + firstL + plan.firstRow + '>0,' + firstL + plan.firstRow + '>=LARGE(' +
-          firstL + '$' + plan.firstRow + ':' + firstL + '$' + plan.lastRow + ',' + topN + '))'],
-        style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: TOP_FILL_ARGB } } }
-      }]
+      var mm = /^([A-Z]+)\d+:([A-Z]+)\d+$/.exec(String(cf.ref || ''));
+      return !(mm && colToNum(mm[1]) >= plan.startCol && colToNum(mm[2]) <= endCol);
     });
 
     var wb = main.workbook;
@@ -2609,7 +2595,7 @@
   }
 
   var ExcelIO = {
-    VERSION: 1,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
+    VERSION: 3,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
     colToNum: colToNum,
     numToCol: numToCol,
     normalizeText: normalizeText,
@@ -2642,6 +2628,8 @@
     mpsTotalsFormulas: mpsTotalsFormulas,
     planSummary: planSummary,
     addSummaryRows: addSummaryRows,
+    summaryFormulas: summaryFormulas,
+    STATUS_GROUPS: STATUS_GROUPS,
     planRma: planRma,
     addRmaRows: addRmaRows,
     MANPOWER_ITEMS: MANPOWER_ITEMS,

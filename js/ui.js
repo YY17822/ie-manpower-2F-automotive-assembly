@@ -197,11 +197,25 @@
     } catch (e) { /* 存不了就算了 */ }
   }
 
+  /* ---------- Status 在哪一行（第 1 步指定，第 2 步、第 6 步共用） ---------- */
+  // 存英文字母，例如 'C'。第 1 步決定之後寫進來；第 2、6 步改了也寫回這裡，三步永遠是同一行。
+  var STATUS_KEY = IEApp.storeKey('statusCol');
+  function getStatusCol() {
+    var v = readJson(STATUS_KEY);
+    if (v) return String(v);
+    var s1 = readJson(IEApp.storeKey('step1')) || {};      // 舊的設定：只記在第 1 步裡
+    return s1.statusCol ? String(s1.statusCol) : '';
+  }
+  function setStatusCol(letter) {
+    try { localStorage.setItem(STATUS_KEY, JSON.stringify(letter || '')); } catch (e) { /* 存不了就算了 */ }
+  }
+
   IEApp.ui = {
     fileDrop: fileDrop,
     readWorkbook: readWorkbook,
     download: download,
     renderSheet: renderSheet,
-    columns: { get: getColumns, set: setColumns }
+    columns: { get: getColumns, set: setColumns },
+    statusCol: { get: getStatusCol, set: setStatusCol }
   };
 })(window);

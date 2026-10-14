@@ -1,16 +1,17 @@
 /*
- * 第 6 步：匯總
- *   在需求工時那一塊的下面（最後一列資料之後空一列）加三列，每格都是公式：
+ * 第 6 步：需求工時匯總
+ *   在需求工時那一塊的下面（最後一列資料之後空一列）加三列，每格都是公式。
+ *   以 Status 在 C 行、需求工時在 N 行、資料在第 5 到 74 列為例：
  *
- *     Production 總需求工時   =SUM(N5:N74)                                    每月所有料號加總
- *     Top 3 總需求工時    =LARGE(N5:N74,1)+LARGE(N5:N74,2)+LARGE(N5:N74,3)   每月最大的三個相加
- *     Others 總需求工時   =N76-N77                                           Production − Top 3
+ *     Production 總需求工時   =SUM(N5:N74)                     每月所有料號加總
+ *     量產總需求工時          =SUMIF($C$5:$C$74,"M",N5:N74)    Status 是 M 的料號
+ *     試產總需求工時          =SUMIF($C$5:$C$74,"R",N5:N74)    Status 是 R 的料號
  *
  *   這三列連同左邊的文字標籤圍成一塊：外框粗線、裡面細格線，標籤置中。
+ *   Production 那一列是淺藍色底（#A2D2FF）。不再用顏色標示前三大。
+ *   Status 不是 M 也不是 R 的列只算進 Production，畫面上會列出來提醒。
  *
- *   每個月前三大的儲存格會標成淺橘色（數值是 0 的不算）。用的是 Excel 的「條件式格式」，
- *   所以之後手動補 CT.、數值變了，標示和這三列的數字都會跟著變。
- *   排名是一個料號（一列）算一個。
+ *   Status 在哪一行：和第 1 步、第 2 步共用同一個設定。
  *
  *   來源有兩種：
  *     a. 剛才第 5 步做好的結果（不用先匯出，直接沿用）
@@ -31,8 +32,9 @@
   var REF_SHEET = 'P003';
   var TITLE = '需求工時';
   var SUFFIX = '_工時匯總';
-  var TOP_N = 3;
-  var LABELS = { total: 'Production 總需求工時', top: 'Top 3 總需求工時', rest: 'Others 總需求工時' };
+  var GROUPS = XIO.STATUS_GROUPS;     // M = 量產、R = 試產（和第 2 步共用）
+  var LABELS = { total: 'Production 總需求工時', groups: GROUPS.map(function (g) { return g.label + '總需求工時'; }) };
+  var STATUS_GUESS = /status|狀態/i;
 
   var S = {
     upload: null,         // 上傳的第 5 步檔案 { name, buffer }
@@ -45,10 +47,11 @@
   function loadSettings() {
     var s = {};
     try { s = JSON.parse(localStorage.getItem(STORE_KEY) || '{}') || {}; } catch (e) { s = {}; }
-    return { startRow: s.startRow === undefined ? '' : s.startRow };
+    return { startRow: s.startRow === undefined ? '' : s.startRow, statusCol: ui.statusCol.get() };
   }
   function saveSettings() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(settings)); } catch (e) { /* 存不了就算了 */ }
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ startRow: settings.startRow })); } catch (e) { /* 存不了就算了 */ }
+    ui.statusCol.set(settings.statusCol);
   }
 
   function isRefName(name) { return String(name).toLowerCase() === REF_SHEET.toLowerCase(); }
@@ -86,9 +89,27 @@
     return n >= 1 ? n : 5;
   }
 
+  function colOf(letter, max) {
+    var p = XIO.parseColumns(letter || '');
+    return p.cols.length === 1 && !p.bad.length && p.cols[0] <= max ? p.cols[0] : 0;
+  }
+
+  function fillSelect(select, labels, colCount, chosen) {
+    select.textContent = '';
+    select.appendChild(h('option', { value: '', text: '請選擇' }));
+    for (var c = 1; c <= colCount; c++) {
+      var letter = XIO.numToCol(c);
+      var label = labels[c] ? letter + '　' + labels[c] : letter;
+      if (label.length > 42) label = label.slice(0, 41) + '…';
+      select.appendChild(h('option', { value: letter, text: label }));
+    }
+    select.value = chosen ? XIO.numToCol(chosen) : '';
+  }
+
   /* ---------- 畫面 ---------- */
   function render(panel) {
     els = {};
+    settings = loadSettings();     // 每次進來都重讀：Status 可能在別的步驟改過
 
     els.srcInfo = h('p', { class: 'source-line', 'aria-live': 'polite' });
     els.drop = ui.fileDrop({
@@ -109,7 +130,8 @@
     els.summary = h('p', { class: 'summary', 'aria-live': 'polite' });
     els.notes = h('ul', { class: 'notes' });
     els.result = h('div', { class: 'sheet-area' });
-    els.tops = h('div', { class: 'sheet-area' });
+    els.statusCol = h('select', { id: 'f5-status', class: 'in-select' });
+    els.others = h('div', { class: 'sheet-area' });
     els.exportBtn = h('button', { type: 'button', class: 'btn-primary', disabled: true, text: '匯出 Excel', onclick: onExport });
     els.nextBtn = h('button', {
       type: 'button', class: 'btn-secondary', disabled: true, text: '下一步：RMA 需求工時',
@@ -119,7 +141,7 @@
 
     panel.appendChild(h('div', { class: 'step-head' },
       h('h1', { text: '需求工時匯總' }),
-      h('p', { text: '在需求工時下面加上每個月正常生產的總需求工時（Production）、前三大料號的合計（Top 3），以及其他料號的合計（Others，Production 減 Top 3）。每格都是公式，前三大的儲存格會標成淺橘色，數值是 0 的不算。' })));
+      h('p', { text: '在需求工時下面加上每個月正常生產的總需求工時（Production），再用 Status 分成量產（M）和試產（R）的合計。每格都是公式。' })));
 
     panel.appendChild(h('ol', { class: 'tasks' },
       h('li', { class: 'task' },
@@ -132,10 +154,21 @@
           h('div', { class: 'field-row' },
             h('label', { for: 'f5-start', text: 'MPS 的資料從第' }), els.startRow, els.startNote))),
       h('li', { class: 'task' },
+        h('h2', { text: 'Status 在哪一行' }),
+        h('div', { class: 'field-row' },
+          h('label', { for: 'f5-status', text: 'Status 在' }), els.statusCol),
+        h('p', { class: 'hint', text: 'M 算量產、R 算試產。預設是第 1 步指定的那一行，和第 2 步共用。' })),
+      h('li', { class: 'task' },
         h('h2', { text: '匯出' }),
-        els.summary, els.notes, els.result, els.tops,
+        els.summary, els.notes, els.result, els.others,
         h('div', { class: 'actions' }, els.exportBtn, els.nextBtn, els.exportNote))));
 
+    els.statusCol.addEventListener('change', function () {
+      settings.statusCol = els.statusCol.value;
+      saveSettings();
+      els.exportNote.textContent = '';
+      refresh();
+    });
     els.startRow.addEventListener('change', function () {
       settings.startRow = els.startRow.value;
       saveSettings();
@@ -200,7 +233,7 @@
     els.nextBtn.disabled = true;
     els.notes.textContent = '';
     els.result.textContent = '';
-    els.tops.textContent = '';
+    els.others.textContent = '';
 
     if (!src) {
       els.srcInfo.textContent = '還沒有第 5 步的結果。回到第 5 步計算需求工時，或上傳之前匯出的檔案。';
@@ -222,16 +255,32 @@
     els.startRow.disabled = !!chain;
     els.startNote.textContent = chain ? '列開始（沿用第 1 步的設定）' : '列開始';
 
-    if (!src) { setSummary('先準備好第 5 步的 Excel。'); return; }
+    function clearStatus() {
+      els.statusCol.textContent = '';
+      els.statusCol.appendChild(h('option', { value: '', text: '請選擇' }));
+    }
+    if (!src) { clearStatus(); setSummary('先準備好第 5 步的 Excel。'); return; }
 
     ensureWork(src);
     var work = S.work;
-    if (work.loading) { setSummary('準備資料中…'); return; }
-    if (work.error) { setSummary(work.error, true); return; }
+    if (work.loading) { clearStatus(); setSummary('準備資料中…'); return; }
+    if (work.error) { clearStatus(); setSummary(work.error, true); return; }
 
     var sr = startRow();
     var keyCol = src.kind === 'prev' && src.prev.keyCol ? src.prev.keyCol : 1;
-    var opts = { dataStartRow: sr, keyCol: keyCol, title: TITLE, topN: TOP_N, labels: LABELS };
+
+    // Status：共用設定（第 1 步指定的）→ 表頭有「Status」的那一行
+    var ext = XIO.extent(work.main);
+    var cols = Math.max(ext.colCount, 1);
+    var labels = XIO.columnLabels(work.main, sr - 1 >= 2 ? 2 : 1, Math.max(sr - 1, 1), cols);
+    var statusCol = colOf(settings.statusCol, cols);
+    if (!statusCol) {
+      for (var g = 1; g <= cols; g++) if (STATUS_GUESS.test(labels[g] || '')) { statusCol = g; break; }
+    }
+    fillSelect(els.statusCol, labels, cols, statusCol);
+    if (!statusCol) { setSummary('選擇 Status 在哪一行。'); return; }
+
+    var opts = { dataStartRow: sr, keyCol: keyCol, title: TITLE, statusCol: statusCol, groups: GROUPS, labels: LABELS };
     var plan = XIO.planSummary(work.main, opts);
 
     if (!plan.found) {
@@ -257,8 +306,19 @@
         bad.join('、') + ' 行有算不出來的格子（例如 #DIV/0!），Excel 裡這幾個月的匯總也會顯示錯誤。請先回第 4 步處理。'));
     }
 
-    renderResult(plan);
-    renderTops(plan);
+    GROUPS.forEach(function (gr, k) {
+      if (!plan.counts[k]) {
+        els.notes.appendChild(h('li', { class: 'is-warn' },
+          XIO.numToCol(statusCol) + ' 行沒有「' + gr.key + '」的列，' + gr.label + '每個月都會是 0。請確認 Status 選對行。'));
+      }
+    });
+    if (plan.others.length) {
+      els.notes.appendChild(h('li', { class: 'is-warn' },
+        '有 ' + plan.others.length + ' 列的 Status 不是 M 也不是 R，只會算進 Production，不算進量產、試產。清單在下面。'));
+    }
+
+    renderResult(plan, opts);
+    renderOthers(plan);
     els.exportBtn.disabled = false;
 
     // 給下一步用
@@ -270,8 +330,9 @@
       demandCol: plan.startCol,
       monthCount: plan.width,
       totalRow: plan.totalRow,
-      topRow: plan.topRow,
+      groupRows: plan.groupRows,
       restRow: plan.restRow,
+      statusCol: statusCol,
       build: function () { return buildWorkbook(src, opts); }
     };
     els.nextBtn.disabled = false;
@@ -291,19 +352,25 @@
   }
 
   // 三個匯總列算出來的數字，以及第一個月填入的公式
-  function renderResult(plan) {
+  function renderResult(plan, opts) {
     var head = h('tr', null,
       h('th', { class: 'colhead', scope: 'col', text: '列' }),
       h('th', { class: 'colhead', scope: 'col', text: '項目' }));
     plan.months.forEach(function (m) { head.appendChild(monthHead(m)); });
 
+    var items = [{ label: LABELS.total, row: plan.totalRow, value: function (m) { return m.total; } }];
+    GROUPS.forEach(function (gr, k) {
+      items.push({ label: LABELS.groups[k] + '（' + gr.key + '，' + plan.counts[k] + ' 列）', row: plan.groupRows[k],
+        value: function (m) { return m.groups[k]; } });
+    });
+
     var body = h('tbody');
-    [['total', plan.totalRow], ['top', plan.topRow], ['rest', plan.restRow]].forEach(function (pair) {
+    items.forEach(function (it) {
       var tr = h('tr', null,
-        h('th', { class: 'rowhead', scope: 'row', text: String(pair[1]) }),
-        h('td', { text: LABELS[pair[0]] }));
+        h('th', { class: 'rowhead', scope: 'row', text: String(it.row) }),
+        h('td', { text: it.label }));
       plan.months.forEach(function (m) {
-        tr.appendChild(h('td', { class: 'is-num' + (pair[0] === 'top' ? ' is-top' : ''), text: m.error ? m.error : showNumber(m[pair[0]]) }));
+        tr.appendChild(h('td', { class: 'is-num', text: m.error ? m.error : showNumber(it.value(m)) }));
       });
       body.appendChild(tr);
     });
@@ -312,37 +379,32 @@
     els.result.appendChild(h('div', { class: 'sheet-scroll', tabindex: '0', role: 'group', 'aria-label': '匯總結果' },
       h('table', { class: 'sheet is-result' }, h('thead', null, head), body)));
 
-    var L = XIO.numToCol(plan.startCol);
-    var range = L + plan.firstRow + ':' + L + plan.lastRow;
-    var n = Math.min(TOP_N, plan.lastRow - plan.firstRow + 1);
-    var large = [];
-    for (var k = 1; k <= n; k++) large.push('LARGE(' + range + ',' + k + ')');
-    els.result.appendChild(h('p', { class: 'hint', text: L + ' 行填入的公式：' +
-      L + plan.totalRow + ' =SUM(' + range + ')　' +
-      L + plan.topRow + ' =' + large.join('+') + '　' +
-      L + plan.restRow + ' =' + L + plan.totalRow + '-' + L + plan.topRow }));
+    var m0 = plan.months[0];
+    if (!m0) return;
+    var L = XIO.numToCol(m0.col);
+    var f = XIO.summaryFormulas(plan, opts, m0);
+    var names = [LABELS.total].concat(LABELS.groups);
+    els.result.appendChild(h('p', { class: 'hint', text: L + ' 行填入的公式（其他月份一樣）：' +
+      plan.rows.map(function (r, j) { return names[j] + ' ' + L + r + ' =' + f[j]; }).join('　') }));
   }
 
-  // 每個月前三大是哪幾個料號（這些儲存格會標成淺橘色）
-  function renderTops(plan) {
-    var head = h('tr', null, h('th', { class: 'colhead', scope: 'col', text: '名次' }));
-    plan.months.forEach(function (m) { head.appendChild(monthHead(m)); });
+  // Status 不是 M 也不是 R 的列
+  function renderOthers(plan) {
+    if (!plan.others.length) return;
+    var head = h('tr', null,
+      h('th', { class: 'colhead', scope: 'col', text: '列' }),
+      h('th', { class: 'colhead', scope: 'col', text: '料號' }),
+      h('th', { class: 'colhead', scope: 'col', text: 'Status' }));
     var body = h('tbody');
-    var depth = 0;
-    plan.months.forEach(function (m) { depth = Math.max(depth, m.topRows.length); });
-    for (var i = 0; i < depth; i++) {
-      var tr = h('tr', null, h('th', { class: 'rowhead', scope: 'row', text: String(i + 1) }));
-      plan.months.forEach(function (m) {
-        var it = m.topRows[i];
-        tr.appendChild(h('td', { class: 'is-top' },
-          it ? h('span', { class: 'top-name', text: it.label }) : '',
-          it ? h('span', { class: 'top-value', text: showNumber(it.value) + '（第 ' + it.row + ' 列）' }) : ''));
-      });
-      body.appendChild(tr);
-    }
-    els.tops.appendChild(h('p', { class: 'sheet-caption', text: '各月前三大的料號（數值是 0 的不算）。這些儲存格在 Excel 裡會標成淺橘色。' }));
-    els.tops.appendChild(h('div', { class: 'sheet-scroll', tabindex: '0', role: 'group', 'aria-label': '各月前三大' },
-      h('table', { class: 'sheet is-result is-tops' }, h('thead', null, head), body)));
+    plan.others.forEach(function (o) {
+      body.appendChild(h('tr', null,
+        h('th', { class: 'rowhead', scope: 'row', text: String(o.row) }),
+        h('td', { text: o.label }),
+        h('td', { text: o.status === '' ? '（空白）' : o.status })));
+    });
+    els.others.appendChild(h('p', { class: 'sheet-caption', text: 'Status 不是 M 也不是 R 的列（只算進 Production）。' }));
+    els.others.appendChild(h('div', { class: 'sheet-scroll', tabindex: '0', role: 'group', 'aria-label': 'Status 不是 M 或 R 的列' },
+      h('table', { class: 'sheet is-result' }, h('thead', null, head), body)));
   }
 
   /* ---------- 產生活頁簿 ---------- */
