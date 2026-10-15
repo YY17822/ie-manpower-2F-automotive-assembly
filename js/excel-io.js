@@ -2315,10 +2315,10 @@
         setFormula(cellOf(rows, 'haveTotal', m), a('haveOnline') + '+' + a('haveOffline'),
           n('haveOnline') + n('haveOffline'), 'General');
 
-        // 人力需求差異 = 現有 TTL − 需求 TTL；Loading Rate = 現有 TTL ÷ 需求 TTL
+        // 人力需求差異 = 現有 TTL − 需求 TTL；Loading Rate = 需求 TTL ÷ 現有 TTL
         var hv = n('haveTotal'), nv = n('needTotal');
         setFormula(cellOf(rows, 'gap', m), a('haveTotal') + '-' + a('needTotal'), hv - nv, '#,##0.0');
-        setFormula(cellOf(rows, 'loading', m), a('haveTotal') + '/' + a('needTotal'), nv ? hv / nv : NaN, '0%');
+        setFormula(cellOf(rows, 'loading', m), a('needTotal') + '/' + a('haveTotal'), hv ? nv / hv : NaN, '0%');
       }
     }
 
@@ -2483,7 +2483,7 @@
   }
 
   var ExcelIO = {
-    VERSION: 6,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
+    VERSION: 7,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
     colToNum: colToNum,
     numToCol: numToCol,
     normalizeText: normalizeText,
