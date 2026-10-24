@@ -22,7 +22,7 @@
   var ui = IEApp.ui;
   var h = IEApp.h;
 
-  var STORE_KEY = IEApp.storeKey('step1');
+  var STORE_KEY = 'step1';                    // 共用設定的組名（存進 Supabase 的 key 是 step1.xxx）
   var PREVIEW_ROWS = 8;     // 預覽顯示幾列資料
   var MAX_CHIPS = 24;
   var STATUS_GUESS = /status|狀態/i;
@@ -42,7 +42,7 @@
   /* ---------- 記住上次輸入的條件（每個月做的事情差不多） ---------- */
   function loadSettings() {
     var s = {};
-    try { s = JSON.parse(localStorage.getItem(STORE_KEY) || '{}') || {}; } catch (e) { s = {}; }
+    try { s = IEApp.settings.read(STORE_KEY) || {}; } catch (e) { s = {}; }
     var out = {};
     Object.keys(DEFAULTS).forEach(function (k) { out[k] = s[k] === undefined ? DEFAULTS[k] : s[k]; });
     if (!Array.isArray(out.reports)) out.reports = [];
@@ -51,12 +51,9 @@
     return out;
   }
   function saveSettings() {
-    var keep = {
-      startRow: settings.startRow, selCol: settings.selCol, reports: settings.reports,
-      statusPos: settings.statusPos,
-      statusCol: statusPos() ? XIO.numToCol(statusPos()) : ''
-    };
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(keep)); } catch (e) { /* 存不了就算了 */ }
+    // Status 在新檔的哪一行（英文字母）存在 step1-2-6，和第 2、6 步共用（ui.statusCol）
+    var keep = { startRow: settings.startRow, selCol: settings.selCol, reports: settings.reports, statusPos: settings.statusPos };
+    try { IEApp.settings.write(STORE_KEY, keep); } catch (e) { /* 存不了就算了 */ }
   }
   function slot(i) {
     while (settings.reports.length <= i) settings.reports.push({ values: '', cols: '' });

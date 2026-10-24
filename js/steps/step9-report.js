@@ -60,14 +60,13 @@
   var h = IEApp.h;
 
   var SHEET_NAME = XIO.REPORT_SHEET;
-  var STEP1_KEY = IEApp.storeKey('step1');
+  var STEP1_KEY = 'step1';
   var TITLE = '需求工時';
   var SUFFIX = '_總表';
   var EXTRA = ['P003', '人力', SHEET_NAME];
-  var STORE_KEY = IEApp.storeKey('report');
+  var STORE_KEY = 'step9';
   var MONTHS = XIO.REPORT.months;
   var DEFAULT_WORK_MINUTES = '480';
-  var EFF_VER = 2;            // 效率預設值的版本：預設值改過時加 1，舊的記憶就不沿用
 
   var S = {
     upload: null,         // 上傳的第 8 步檔案 { name, buffer, sheets }
@@ -95,7 +94,7 @@
 
   function loadInputs() {
     var s = {};
-    try { s = JSON.parse(localStorage.getItem(STORE_KEY) || '{}') || {}; } catch (e) { s = {}; }
+    try { s = IEApp.settings.read(STORE_KEY) || {}; } catch (e) { s = {}; }
     var out = {
       title: s.title === undefined || s.title === null ? XIO.REPORT_TITLE_DEFAULT : String(s.title),
       weekdays: blank6(''),
@@ -113,9 +112,7 @@
     var off = Array.isArray(s.offline) ? s.offline : [];
     out.offline = XIO.REPORT_OFFLINE.map(function (c, k) { return off[k] === undefined || off[k] === null ? '' : String(off[k]); });
     REMEMBERED.forEach(function (row) {
-      // 效率的預設值改過（v5：量產 95、試產 85、重工 80），之前版本記住的效率不沿用
-      var stale = /^eff/.test(row.key) && s.effVer !== EFF_VER;
-      var saved = !stale && Array.isArray(s[row.key]) ? s[row.key].slice(0, MONTHS) : [];
+      var saved = Array.isArray(s[row.key]) ? s[row.key].slice(0, MONTHS) : [];
       while (saved.length < MONTHS) saved.push(row.def);
       out[row.key] = saved.map(function (v) { return v === undefined || v === null ? row.def : String(v); });
     });
@@ -124,9 +121,9 @@
   function saveInputs() {
     var i = S.inputs;
     var keep = { title: i.title, otHours: i.otHours, otRate: i.otRate, yoLimit: i.yoLimit,
-      newModels: i.newModels, reworkPeople: i.reworkPeople, offline: i.offline, effVer: EFF_VER };
+      newModels: i.newModels, reworkPeople: i.reworkPeople, offline: i.offline };
     REMEMBERED.forEach(function (row) { keep[row.key] = i[row.key]; });
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(keep)); } catch (e) { /* 存不了就算了 */ }
+    try { IEApp.settings.write(STORE_KEY, keep); } catch (e) { /* 存不了就算了 */ }
   }
 
   // 輸入框的文字 → 數字。回傳 { values, error, blanks: [說明…] }
@@ -212,7 +209,7 @@
     if (src.kind === 'prev' && src.prev.dataStartRow) return src.prev.dataStartRow;
     var n = 0;
     try {
-      var s1 = JSON.parse(localStorage.getItem(STEP1_KEY) || '{}') || {};
+      var s1 = IEApp.settings.read(STEP1_KEY) || {};
       n = parseInt(XIO.normalizeText(s1.startRow === undefined ? '' : s1.startRow), 10);
     } catch (e) { n = 0; }
     return n >= 1 ? n : 5;
@@ -237,7 +234,7 @@
 
   // 現有人力：從「人力」工作表抓第 8 步確認過的那幾列
   var MP_SHEET = '人力';
-  var MP_STORE_KEY = IEApp.storeKey('manpower');
+  var MP_STORE_KEY = 'step8';                // 第 8 步的設定
   var MP_LINKS = [
     { key: 'haveOnline', item: 'online', label: 'Online' },
     { key: 'haveOffline', item: 'offDirect', label: 'Off line（直接）' }
@@ -249,7 +246,7 @@
       return { rows: src.prev.rows, firstCol: src.prev.firstMonthCol, from: 'chain' };
     }
     var s = {};
-    try { s = JSON.parse(localStorage.getItem(MP_STORE_KEY) || '{}') || {}; } catch (e) { s = {}; }
+    try { s = IEApp.settings.read(MP_STORE_KEY) || {}; } catch (e) { s = {}; }
     var firstCol = parseInt(s.lastFirstCol, 10) || 0;
     if (!s.rows || !firstCol) return null;
     return { rows: s.rows, firstCol: firstCol, from: 'saved' };

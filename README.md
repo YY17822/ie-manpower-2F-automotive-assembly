@@ -204,7 +204,8 @@ P003 的 Labor 是做 Base Qty 個的工時（Base Qty 有 1 也有 100），除
 
 ```
 index.html                  主畫面
-js/config.js                專案代號（快取和記住的設定都用它當開頭）
+js/config.js                專案代號、Supabase 網址和公開鑰匙（SUPABASE_PUBLIC_URL、SUPABASE_PUBLISHABLE_KEY）
+js/cloud.js                 登入與共用設定（Supabase）
 manifest.webmanifest        安裝成 App 用的資訊
 sw.js                       離線快取
 css/style.css               樣式
@@ -220,33 +221,129 @@ js/steps/step6-summary.js       第 6 步　需求工時匯總
 js/steps/step7-rma.js           第 7 步　RMA 需求工時
 js/steps/step8-manpower.js      第 8 步　匯入人力報表
 js/steps/step9-report.js        第 9 步　總表
+vendor/supabase.js          supabase-js 2.117.3（連 Supabase 用，必要）
 vendor/                     ExcelJS 本機副本（可選）
 icons/                      圖示
 啟動小程式.command           在 Mac 上啟動
+.gitignore                  不進 git 的檔案（.DS_Store、.env）
 ```
 
-新增步驟時：在 `js/steps/` 加一個檔案、在 `index.html` 加一行 `<script>`、
-在 `sw.js` 的 `SHELL` 加上檔名並把 `CACHE` 版本號加 1。
+新增步驟時：在 `js/steps/` 加一個檔案、在 `js/app.js` 的 `STEP_FILES` 加上檔名（各步驟由 app.js 在登入後載入，不寫在 `index.html`）、
+在 `sw.js` 的 `SHELL` 加上檔名並把版本號加 1；有記住的輸入就在 `STEP_SETTINGS` 寫上這一步用到的組名。
 檔名開頭的數字就是步驟編號；在中間插入新步驟時，後面的檔案要跟著改名。
 
-每次改版：把 `js/excel-io.js` 裡的 `VERSION` 和 `index.html` 裡每個 `?v=` 的數字一起加 1。
+每次改版：把 `js/excel-io.js` 裡的 `VERSION`、`sw.js` 的 `VERSION` 和 `index.html` 裡每個 `?v=` 的數字一起加 1。
 畫面右上角會顯示「版本 N」，可以用來確認瀏覽器跑的是不是最新的程式。
 
 每一步做完會把結果放在 `IEApp.state`（第 1 步是 `mpsFiltered`，第 2 步是 `mpsTotals`，第 3 步是 `withP003`，第 4 步是 `withCT`，第 5 步是 `withDemand`，第 6 步是 `withSummary`，第 7 步是 `withRma`，第 8 步是 `withManpower`，第 9 步是 `withReport`），
 裡面的 `build()` 會產生一份新的活頁簿，下一步拿來接著加工。
 
+## 登入與共用設定（Supabase）
+
+部門的人共用同一份「記住的設定」：誰最後存，大家打開看到的就是誰的。
+
+- 打開時要先登入（email + 密碼）。帳號由管理者在 Supabase 後台建立（Authentication → Users → Add user），不開放自行註冊。
+- 設定存在 Supabase 專案的 `ie_manpower.settings` 表：一筆是 `(app, key) → value`。
+  - `app`：專案代號（`js/config.js` 的 `PROJECT_ID`）。8 個人力需求 PWA 共用這張表，用 `app` 分開。
+  - `key`：「步驟.輸入項目」，例如 `step9.otHours` 是第 9 步的每日加班小時。組名一律用步驟編號（`step1`～`step9`），第 2、5 步共用的 WIP／月份行是 `step2-5`，第 1、2、6 步共用的 Status 行是 `step1-2-6`。
+  - `value`：那個輸入項目的值（JSON）。6 個月、Off line 各種人數這種一起看的值放在同一筆（陣列）。
+  - `updated_at`、`updated_by` 由資料庫的 trigger 自動填，程式不送。
+  - 一個輸入項目一筆，所以兩個人同時改同一步的不同項目，不會互相蓋掉；每個項目都記得是誰改的。
+- 誰改的、什麼時候改的由資料庫自動記錄（`updated_by`、`updated_at`），各步驟標題下面會顯示「共用設定：上次由 某某 於 10/19 16:05 修改」。
+- 右上角顯示登入的人、同步狀態（已同步／同步中／離線）和「登出」。
+- 讀設定一律讀這台電腦的本機備份（localStorage），所以離線也能用；改了設定先存本機，再在背景上傳（停止輸入 1 秒後）。離線時改的會等連上網路自動上傳。
+- 打開時先把 Supabase 上最新的設定抓下來蓋掉本機備份，才載入各步驟（所以 `index.html` 裡沒有各步驟的 `<script>`，改由 `js/app.js` 的 `STEP_FILES` 載入）。
+- 第一次登入時，這台電腦原本有、但 Supabase 上還沒有的設定會傳上去。
+- 舊資料搬移（版本 7 以前只存在這台電腦的 localStorage）：第一次打開版本 8 時，舊的組名 `totals`、`columns`、`statusCol`、`step3`～`step6`、`manpower`、`report` 會在本機改成步驟編號（對照表在 `js/cloud.js` 的 `LEGACY_GROUPS`）；以前只記在第 1 步裡的 Status 行也會搬到 `step1-2-6`。新版不再存的 `step1.statusCol`、`step9.effVer` 會拿掉。登入後，這台電腦有、但 Supabase 上還沒有的項目會自動上傳。
+
+2F 組裝存進資料庫的輸入項目（`app` 都是 `ie-manpower-2F-automotive-assembly`）：
+
+| key | 對應的輸入框 | value 範例 |
+| --- | --- | --- |
+| `step1.startRow`、`step1.selCol` | 第 1 步：資料起始列、選取條件在哪一行 | `5`、`"A"` |
+| `step1.reports` | 第 1 步：各報表的「A 行等於」和保留的行（依報表順序） | `[{"values":"1","cols":"B:K"}]` |
+| `step1.statusPos` | 第 1 步：Status 是第幾個保留的行 | `"3"` |
+| `step1-2-6.statusCol` | 第 1、2、6 步共用：Status 在新檔的哪一行 | `"C"` |
+| `step2.startRow` | 第 2 步：資料起始列（報表版面不一樣時） | `""` |
+| `step2-5.wipCol`、`step2-5.monthCols` | 第 2、5 步共用：WIP 在哪行、各月在哪幾行 | `"D"`、`"E:J"` |
+| `step4.keyCol`、`step4.refKeyCol`、`step4.refValueCol`、`step4.refDivCol`、`step4.startRow` | 第 4 步：MPS 料號、P003 料號／Labor／Base Qty 的行、資料起始列 | `"A"`、`"B"`、`"M"`、`"K"`、`""` |
+| `step5.startRow`、`step6.startRow` | 第 5、6 步：資料起始列 | `""` |
+| `step7.items`、`step7.startRow` | 第 7 步：RMA 項目名稱和 CT.、資料起始列 | `[{"name":"重工A","ct":"10"}]` |
+| `step8.rows`、`step8.lastFirstCol` | 第 8 步：各項目在人力報表第幾列、上次的當月行 | `{"online":4,"offDirect":6}`、`4` |
+| `step9.title` | 第 9 步：總表大標題 | `"製二課 (車用/光機)"` |
+| `step9.workMinutes`、`step9.effMass`、`step9.effTrial`、`step9.effRework`、`step9.attendance` | 第 9 步：工作時間、綜合效率%（量產／試產／重工）、出勤率%，各 6 個月 | `["480","480",…]` |
+| `step9.otHours`、`step9.otRate`、`step9.yoLimit` | 第 9 步：每日加班小時、加班出勤人數 %、YO 加班上限 | `"2"`、`"80"`、`"78"` |
+| `step9.newModels`、`step9.reworkPeople` | 第 9 步：需求人力「新機種+重工」的新機種名稱和各月人數、重工各月人數 | `[{"name":"X100","qty":["2","2","3","3","3","3"]}]` |
+| `step9.offline` | 第 9 步：需求人力「Off line」的領班、物料（含材製損）、文書、包裝人數 | `["1","2","1","3"]` |
+
+取名原則：組名一律用步驟編號（總表也是 `step9`）；幾步共用的組寫成 `step2-5`、`step1-2-6`，看名字就知道是哪幾步共用（同一個軟件的幾步共用，不是各產線共用）。一個輸入項目一筆，6 個月、幾種人數這種一起看的值放在同一筆（陣列）。
+
+- 不記住的欄位（上傳的檔案、第 5 步的月份表頭、第 7 步的 RMA 數量、第 9 步的平日工作天數）照舊每次輸入，不會上傳。
+- 程式在 `js/cloud.js`，用 supabase-js 套件連線（`vendor/supabase.js`，版本 2.117.3，放在專案裡，離線也載得到）。雲端、本機自架、公司主機上的 Supabase 都用同一套程式，換資料庫只改 `js/config.js` 的 `SUPABASE_PUBLIC_URL`、`SUPABASE_PUBLISHABLE_KEY`。各步驟用 `IEApp.settings.read('step9')`／`IEApp.settings.write('step9', 物件)` 讀寫一整步的設定，`cloud.js` 負責拆成一個個輸入項目上傳、下載時再組回去。
+- Supabase 的網址和公開鑰匙在 `js/config.js`。公開鑰匙本來就是公開用的；安全靠登入和資料表的權限規則（只有登入的人能讀寫，不能刪除）。`SUPABASE_SECRET_KEY`（舊式名稱：`SERVICE_ROLE_KEY`）不可以放進程式。
+- 取名原則：`js/config.js` 的設定名稱照自架 Supabase 的 `.env` 取，兩邊找得到同一個名字。
+
+  | `js/config.js` | 對應自架 `.env` | 說明 |
+  | --- | --- | --- |
+  | `SUPABASE_PUBLIC_URL` | `SUPABASE_PUBLIC_URL` | Supabase 網址 |
+  | `SUPABASE_PUBLISHABLE_KEY` | `SUPABASE_PUBLISHABLE_KEY`（舊式名稱：`ANON_KEY`） | 公開鑰匙，`sb_publishable_` 開頭 |
+  | `SUPABASE_SCHEMA` | `PGRST_DB_SCHEMAS` 清單裡的其中一個 | 這個程式用的 schema（`ie_manpower`） |
+
+- 登入資訊由 supabase-js 存在這台電腦的 `ie-manpower-2F-automotive-assembly._auth`，會自己換新憑證。
+- 有登入過的人打開時，如果 4 秒內連不上 Supabase，就先用這台電腦的設定，連上之後自動同步。
+
+### 換一個 Supabase（本機自架、公司主機）
+
+每個新的 Supabase 都要做一次：
+
+1. 執行下面的 SQL（Studio 的 SQL Editor）。
+2. 讓 API 看得到 `ie_manpower` schema：
+   - 雲端：Settings → Data API → Exposed schemas 加上 `ie_manpower`。
+   - Mac 上的 supabase CLI：`supabase/config.toml` 的 `[api]` 裡 `schemas` 加上 `"ie_manpower"`，再 `supabase stop` / `supabase start`。
+   - Docker 自架：docker 資料夾 `.env` 的 `PGRST_DB_SCHEMAS` 加上 `,ie_manpower`，再 `docker compose up -d` 重啟。
+3. 關閉自行註冊：CLI 是 `config.toml` 的 `[auth] enable_signup = false`；Docker 是 `.env` 的 `DISABLE_SIGNUP=true`。
+4. 在 Studio 的 Authentication → Users 新增同事的帳號（email + 密碼，勾 Auto Confirm）。
+5. 改 `js/config.js` 的 `SUPABASE_PUBLIC_URL`、`SUPABASE_PUBLISHABLE_KEY`（各環境要填什麼寫在檔案開頭）。
+
+搬到公司主機時要注意：
+
+- 別台電腦連的網址要寫主機的 IP 或名稱，不能寫 `127.0.0.1`／`localhost`（那是指使用者自己的電腦）。
+- 用 https 網址打開的程式（例如 GitHub Pages）不能連 http 的 Supabase（瀏覽器會擋）。程式和 Supabase 要都是 http（例如程式也放在公司主機上），或都是 https。
+- 離線快取（Service Worker）和「安裝成 App」只在 https 或 `localhost` 打開時才有；用 `http://主機IP` 打開時程式照常能用，但沒有離線功能。
+
+建立資料庫的 SQL（雲端 Supabase 已經執行過；Exposed schemas 要加上 `ie_manpower`，見上面第 2 點）：
+
+```sql
+create schema if not exists ie_manpower;
+grant usage on schema ie_manpower to authenticated;
+create table if not exists ie_manpower.settings (
+  app text not null, key text not null, value jsonb not null,
+  updated_at timestamptz not null default now(), updated_by text,
+  primary key (app, key)
+);
+alter table ie_manpower.settings enable row level security;
+grant select, insert, update on ie_manpower.settings to authenticated;
+create policy "settings_read"   on ie_manpower.settings for select to authenticated using (true);
+create policy "settings_insert" on ie_manpower.settings for insert to authenticated with check (true);
+create policy "settings_update" on ie_manpower.settings for update to authenticated using (true) with check (true);
+create or replace function ie_manpower.stamp_settings() returns trigger language plpgsql security definer set search_path = '' as $$
+begin new.updated_at := now(); new.updated_by := auth.jwt() ->> 'email'; return new; end $$;
+create trigger settings_stamp before insert or update on ie_manpower.settings
+for each row execute function ie_manpower.stamp_settings();
+```
+
 ## 專案代號與複製成新專案
 
 這個專案的代號是 `ie-manpower-2F-automotive-assembly`，寫在 `js/config.js`（網頁和 `sw.js` 都讀這個檔案）。
 
-- 離線快取的名稱：`ie-manpower-2F-automotive-assembly-v1`（代號 + 版本號，版本號在 `sw.js` 的 `VERSION`）。新版啟用時，只刪「這個代號、但不是目前版本」的舊快取，別的專案的快取不碰。
-- 記住的設定（localStorage）：`ie-manpower-2F-automotive-assembly.step1` 這種名稱，用 `IEApp.storeKey('step1')` 產生。
+- 離線快取的名稱：`ie-manpower-2F-automotive-assembly-v8`（代號 + 版本號，版本號在 `sw.js` 的 `VERSION`）。新版啟用時，只刪「這個代號、但不是目前版本」的舊快取，別的專案的快取不碰。
+- 記住的設定：Supabase 上是 `app` = 專案代號、`key` = `step1.startRow` 這種名稱；這台電腦的本機備份（localStorage）是 `ie-manpower-2F-automotive-assembly.step1` 這種名稱。各步驟一律用 `IEApp.settings.read('step1')`／`IEApp.settings.write('step1', 物件)` 讀寫，不直接碰 localStorage。
 - 這個專案是從 3F 取像版（`ie-manpower-3F-image-lens`）複製出來的，沒有舊名稱要搬（`config.js` 的 LEGACY_* 都是 null），不會動到 3F 取像版的設定和快取。
 - 啟動用的 port 是 8766（3F 取像版是 8765）。兩個專案開在同一個 port 會被瀏覽器當成同一個網站，離線快取的背景程式會互相蓋掉。
 
 複製成新專案時要改的地方：
 
-1. `js/config.js`：`PROJECT_ID` 改成新專案的代號；`LEGACY_STORE_PREFIX`、`LEGACY_CACHE_PATTERN` 改成 `null`。
+1. `js/config.js`：`PROJECT_ID` 改成新專案的代號（`ie-manpower-<產線>`）；`LEGACY_STORE_PREFIX`、`LEGACY_CACHE_PATTERN` 改成 `null`。`SUPABASE_*` 不用改（所有產線共用同一個 Supabase、同一個 schema，用 `PROJECT_ID` 分開）。
 2. `manifest.webmanifest`：`name`、`short_name`（最好也換 `theme_color` 或圖示）。
 3. `啟動小程式.command`：`PORT` 改成別的號碼（例如 8766），本機測試時兩個專案才不會是同一個網址。
 4. `sw.js` 的 `VERSION`、`js/excel-io.js` 的 `VERSION`、`index.html` 的 `?v=` 可以從 1 重新開始。
