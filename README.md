@@ -7,7 +7,8 @@ IE 部門每月月底計算未來六個月人力需求的小工具。一步一�
 ## 怎麼開啟
 
 - **最簡單**：點兩下 `index.html`，用 Chrome 或 Edge 開啟。
-- **要安裝成 App、離線使用**：點兩下 `啟動小程式.command`，瀏覽器會開啟 `http://localhost:8766`。用完把跳出來的終端機視窗關掉。
+- **要安裝成 App、離線使用**：點兩下 `啟動小程式.command`，瀏覽器會開啟 `http://localhost:3004`。用完把跳出來的終端機視窗關掉。
+- **用 VS Code Go Live**：在 VS Code 開啟專案資料夾，按右下角「Go Live」，瀏覽器會開啟 `http://127.0.0.1:3004`（port 在 `.vscode/settings.json`）。
 
 第一次使用需要連上網路，小程式會載入 ExcelJS（讀寫 Excel 的元件）。
 要在不能連外部網站的電腦上用，請看 `vendor/README.txt`。
@@ -345,5 +346,5 @@ for each row execute function ie_manpower.stamp_settings();
 
 1. `js/config.js`：`PROJECT_ID` 改成新專案的代號（`ie-manpower-<產線>`）；`LEGACY_STORE_PREFIX`、`LEGACY_CACHE_PATTERN` 改成 `null`。`SUPABASE_*` 不用改（所有產線共用同一個 Supabase、同一個 schema，用 `PROJECT_ID` 分開）。
 2. `manifest.webmanifest`：`name`、`short_name`（最好也換 `theme_color` 或圖示）。
-3. `啟動小程式.command`：`PORT` 改成別的號碼（例如 8766），本機測試時兩個專案才不會是同一個網址。
+3. `啟動小程式.command` 的 `PORT` 和 `.vscode/settings.json` 的 port 改成同一個號碼，各專案從 3001 開始往上加（3F 取像 3001、2F 組裝 3004…），本機測試時兩個專案才不會是同一個網址。
 4. `sw.js` 的 `VERSION`、`js/excel-io.js` 的 `VERSION`、`index.html` 的 `?v=` 可以從 1 重新開始。
