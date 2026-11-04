@@ -686,7 +686,9 @@
 
   /*
    * 把 ws 裡「選取行的值符合」的資料列，依序寫到 ows 的第 outRow 列起。
-   * o: { dataStartRow, selectorCol, values, keepCols, lastRow }
+   * o: { dataStartRow, selectorCol, values, op, keepCols, lastRow }
+   *   op  'neq' = 留下選取行「不等於」values 的列；其他（沒給）= 留下「等於」的列
+   *   兩種都一樣：選取行空白的列一律不要
    * 回傳 { matched, total, nextRow }（nextRow = 下一個空的列號）
    */
   function appendFilteredRows(ows, outRow, ws, o) {
@@ -700,7 +702,8 @@
       var srcRow = ws.findRow(r);
       if (!srcRow) continue;
       var key = matchKey(cellRawValue(srcRow.findCell(o.selectorCol)));
-      if (key === '' || !wanted[key]) continue;
+      if (key === '') continue;                                  // 選取行空白的列一律不要
+      if (o.op === 'neq' ? !!wanted[key] : !wanted[key]) continue;
       matched++;
       var dstRow = ows.getRow(outRow++);
       if (srcRow.height) dstRow.height = srcRow.height;
@@ -718,7 +721,8 @@
 
   /*
    * 好幾份 MPS 報表篩選後合成一張表。
-   *   parts   [{ ws, values, keepCols, lastRow }]，依順序往下接
+   *   parts   [{ ws, values, keepCols, lastRow, selectorCol, op }]，依順序往下接
+   *           selectorCol、op 可省略：每份報表可以用自己的篩選行和「等於／不等於」，沒給就用 common 的、等於
    *   common  { dataStartRow, selectorCol }（每份報表的版面一樣）
    * 表頭（含合併儲存格、行寬、凍結窗格、列印設定）用第一份報表的；
    * 之後每份報表符合條件的列，直接接在前一份的最後一列下面。
@@ -729,8 +733,8 @@
   function filterMany(parts, common) {
     function optsOf(p) {
       return {
-        dataStartRow: common.dataStartRow, selectorCol: common.selectorCol,
-        values: p.values, keepCols: p.keepCols, lastRow: p.lastRow
+        dataStartRow: common.dataStartRow, selectorCol: p.selectorCol || common.selectorCol,
+        values: p.values, op: p.op, keepCols: p.keepCols, lastRow: p.lastRow
       };
     }
     var res = filter(parts[0].ws, optsOf(parts[0]));
@@ -2483,7 +2487,7 @@
   }
 
   var ExcelIO = {
-    VERSION: 8,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
+    VERSION: 9,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
     colToNum: colToNum,
     numToCol: numToCol,
     normalizeText: normalizeText,

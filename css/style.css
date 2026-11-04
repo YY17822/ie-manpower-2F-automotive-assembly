@@ -381,3 +381,7 @@ button.step:hover { background: rgba(11, 110, 105, 0.07); }
   .topbar .app-sub { display: none; }
   .cloud-box { margin-left: 0; flex-basis: 100%; flex-wrap: wrap; }
 }
+/* 單選按鈕那一列（第 1 步的篩選方式、等於／不等於） */
+.radio-row label { font-weight: 400; display: inline-flex; align-items: center; gap: 0.375rem; cursor: pointer; }
+.field-name { font-weight: 700; }
+.filter-box { margin-top: 0.625rem; }

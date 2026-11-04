@@ -93,6 +93,7 @@
    * o.keepRows    { 列號: true }，要標示的列（可省略）。有給的話，只有「標示的列 × 標示的行」交叉的格子畫螢光
    * o.onToggle    點行號時呼叫（可省略；有給的話行號會變成按鈕）
    * o.selectorCol / o.wanted  用來把不符合條件的列變淡（可省略）
+   * o.wantedOp    'neq' 時改成：wanted 裡的值和空白的列變淡（「不等於」篩選用，可省略）
    */
   function renderSheet(container, ws, o) {
     container.textContent = '';
@@ -138,7 +139,7 @@
       var out = false;
       if (!isHeader && o.wanted) {
         var k = XIO.matchKey(valueOf(row && row.findCell(o.selectorCol)));
-        out = !(k !== '' && o.wanted[k]);
+        out = o.wantedOp === 'neq' ? (k === '' || !!o.wanted[k]) : !(k !== '' && o.wanted[k]);
       }
       var tr = h('tr', { class: (isHeader ? 'is-header' : '') + (out ? ' is-out' : '') },
         h('th', { class: 'rowhead' + (keepRows && keepRows[r] ? ' is-kept' : ''), scope: 'row', text: String(r) }));

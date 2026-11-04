@@ -2,7 +2,10 @@
  * 第 1 步：篩選 MPS 報表（好幾份報表合成一份）
  *   1. 上傳 MPS 的 Excel，一次可以好幾份（通常 3、4 份），每份報表版面一樣：
  *      第 1–4 列表頭、第 5 列開始資料、A 行是選取欄
- *   2. 每份報表各自輸入「A 行等於多少」和「要保留哪些行」
+ *   2. 每份報表各自選篩選方式，並輸入「要保留哪些行」：
+ *        a. A 行等於多少（原本的方式）
+ *        b. 指定某一行，等於或不等於哪些值；這一行空白的列一律不要
+ *      兩種方式各報表可以混用
  *      ——各報表保留的行位置可以不同，但保留的行數和順序（相對位置）要一樣
  *   3. 指定 Status 在哪一行（區分量產、試產，後面總表會用到）
  *   4. 匯出一份新的 Excel：表頭用報表 1 的（含合併儲存格），
@@ -73,8 +76,20 @@
     var n = parseInt(settings.statusPos, 10);
     return n >= 1 ? n : 0;
   }
+  // 篩選方式：'a' = A 行等於（原本的方式，用 values），'col' = 指定行等於／不等於（用 fcol、op、fvalues）
+  // 舊設定沒有 mode，當作 'a'
+  function modeOf(i) { return slot(i).mode === 'col' ? 'col' : 'a'; }
+  function opOf(i) { return modeOf(i) === 'col' && slot(i).op === 'neq' ? 'neq' : 'eq'; }
+  function filterCol(i) {
+    var p = XIO.parseColumns(slot(i).fcol || '');
+    return p.cols.length === 1 && !p.bad.length ? p.cols[0] : 0;
+  }
+  // 這份報表用哪一行篩選（「指定行」還沒填好時是 0）
+  function colFor(i) { return modeOf(i) === 'col' ? filterCol(i) : selCol(); }
+  function valueText(i) { return (modeOf(i) === 'col' ? slot(i).fvalues : slot(i).values) || ''; }
+  function setValueText(i, t) { if (modeOf(i) === 'col') slot(i).fvalues = t; else slot(i).values = t; }
   function wantedValues(i) {
-    return XIO.normalizeText(slot(i).values).split(/[,、;]+/)
+    return XIO.normalizeText(valueText(i)).split(/[,、;]+/)
       .map(function (v) { return v.trim(); })
       .filter(function (v) { return v !== ''; });
   }
@@ -122,7 +137,7 @@
 
     panel.appendChild(h('div', { class: 'step-head' },
       h('h1', { text: '篩選 MPS 報表' }),
-      h('p', { text: '上傳好幾份 MPS 報表，各自留下 A 行等於指定數值的列和要的行，往下接成一份新的 Excel。表頭（第 1–4 列）用報表 1 的，原樣保留。' })));
+      h('p', { text: '上傳好幾份 MPS 報表，各自依選取條件留下要的列和要的行，往下接成一份新的 Excel。表頭（第 1–4 列）用報表 1 的，原樣保留。' })));
 
     panel.appendChild(h('ol', { class: 'tasks' },
       h('li', { class: 'task' },
@@ -135,9 +150,10 @@
             h('label', { for: 'f-start', text: '資料從第' }), els.startRow, h('span', { text: '列開始（之前的列都當作表頭保留）' })),
           h('div', { class: 'field-row' },
             h('label', { for: 'f-selcol', text: '選取條件在' }), els.selCol, h('span', { text: '行' })),
-          h('p', { class: 'hint', text: '每份報表都用同一組版面設定。' }))),
+          h('p', { class: 'hint', text: '每份報表都用同一組版面設定。「選取條件在哪一行」只用在「A 行等於」這種篩選方式。' }))),
       h('li', { class: 'task' },
         h('h2', { text: '各報表的選取條件和要保留的行' }),
+        h('p', { class: 'hint', text: '篩選方式每份報表各自選，可以混用：「A 行等於」是原本的方式；「指定行」可以選任何一行，留下等於或不等於某些值的列，那一行空白的列一律不要。' }),
         h('p', { class: 'hint', text: '每份報表保留的行位置可以不同，但行數和順序要一樣：報表 1 保留的第 1 個行，和報表 2 保留的第 1 個行，會放在新檔的同一行。' }),
         els.cards),
       h('li', { class: 'task' },
@@ -263,6 +279,58 @@
       id: pre + 'values', type: 'text', class: 'in in-short', autocomplete: 'off',
       inputmode: 'decimal', placeholder: '例如 1', value: st.values
     });
+
+    // 篩選方式：A 行等於（原本的）／指定行 等於、不等於
+    var mode = modeOf(i);
+    E.modeA = h('input', { id: pre + 'mode-a', type: 'radio', name: pre + 'mode', value: 'a' });
+    E.modeC = h('input', { id: pre + 'mode-c', type: 'radio', name: pre + 'mode', value: 'col' });
+    E.modeA.checked = mode === 'a';
+    E.modeC.checked = mode === 'col';
+    E.modeALabel = h('span', { text: 'A' });
+    E.fcol = h('input', {
+      id: pre + 'fcol', type: 'text', class: 'in in-tiny', autocomplete: 'off', spellcheck: 'false',
+      placeholder: '例如 D', value: st.fcol || ''
+    });
+    E.opEq = h('input', { id: pre + 'op-eq', type: 'radio', name: pre + 'op', value: 'eq' });
+    E.opNe = h('input', { id: pre + 'op-ne', type: 'radio', name: pre + 'op', value: 'neq' });
+    E.opEq.checked = st.op !== 'neq';
+    E.opNe.checked = st.op === 'neq';
+    E.fvalues = h('input', {
+      id: pre + 'fvalues', type: 'text', class: 'in in-short', autocomplete: 'off',
+      placeholder: '例如 M, R', value: st.fvalues || ''
+    });
+    E.boxA = h('div', { class: 'filter-box', hidden: mode !== 'a' },
+      h('div', { class: 'field-row' },
+        h('label', { for: pre + 'values' }, E.selLabel, ' 行等於'), E.values),
+      h('p', { class: 'hint', text: '要選多個數值時用逗號分開，例如 1, 3。' }));
+    E.boxC = h('div', { class: 'filter-box', hidden: mode !== 'col' },
+      h('div', { class: 'field-row' },
+        h('label', { for: pre + 'fcol', text: '篩選的行' }), E.fcol),
+      h('div', { class: 'field-row radio-row', role: 'radiogroup', 'aria-label': '等於或不等於' },
+        h('label', { for: pre + 'op-eq' }, E.opEq, '等於'),
+        h('label', { for: pre + 'op-ne' }, E.opNe, '不等於'),
+        E.fvalues),
+      h('p', { class: 'hint', text: '多個值用逗號分開，也可以點下面出現過的值。這一行空白的列一律不要；選「不等於」又沒填值，就是只拿掉空白的列。' }));
+
+    function setMode(m) {
+      slot(i).mode = m;
+      E.boxA.hidden = m !== 'a';
+      E.boxC.hidden = m !== 'col';
+      R.infoKey = '';
+      els.exportNote.textContent = '';
+      recompute();
+    }
+    function setOp(op) {
+      slot(i).op = op;
+      els.exportNote.textContent = '';
+      recompute();
+    }
+    E.modeA.addEventListener('change', function () { if (E.modeA.checked) setMode('a'); });
+    E.modeC.addEventListener('change', function () { if (E.modeC.checked) setMode('col'); });
+    E.opEq.addEventListener('change', function () { if (E.opEq.checked) setOp('eq'); });
+    E.opNe.addEventListener('change', function () { if (E.opNe.checked) setOp('neq'); });
+    E.fcol.addEventListener('input', function () { slot(i).fcol = E.fcol.value; R.infoKey = ''; schedule(); });
+    E.fvalues.addEventListener('input', function () { slot(i).fvalues = E.fvalues.value; schedule(); });
     E.chips = h('div', { class: 'chips' });
     E.cols = h('input', {
       id: pre + 'cols', type: 'text', class: 'in in-wide', autocomplete: 'off', spellcheck: 'false',
@@ -283,9 +351,11 @@
         h('span', { class: 'report-name', text: R.fileName })),
       h('div', { class: 'field-row', hidden: R.workbook.worksheets.length < 2 },
         h('label', { for: pre + 'sheet', text: '工作表' }), E.sheet),
-      h('div', { class: 'field-row' },
-        h('label', { for: pre + 'values' }, E.selLabel, ' 行等於'), E.values),
-      h('p', { class: 'hint', text: '要選多個數值時用逗號分開，例如 1, 3。' }),
+      h('div', { class: 'field-row radio-row', role: 'radiogroup', 'aria-label': '篩選方式' },
+        h('span', { class: 'field-name', text: '篩選方式' }),
+        h('label', { for: pre + 'mode-a' }, E.modeA, E.modeALabel, ' 行等於'),
+        h('label', { for: pre + 'mode-c' }, E.modeC, '指定行 等於／不等於')),
+      E.boxA, E.boxC,
       E.chips,
       h('div', { class: 'field-row' },
         h('label', { for: pre + 'cols', text: '要保留的行' }), E.cols),
@@ -341,7 +411,10 @@
     ui.statusCol.set(XIO.numToCol(sp));       // 第 2 步、第 6 步共用
 
     var parts = S.reports.map(function (R, i) {
-      return { ws: R.ws, values: ready[i].values, keepCols: ready[i].cols, lastRow: R.info.lastRow };
+      return {
+        ws: R.ws, values: ready[i].values, op: ready[i].op, selectorCol: ready[i].col,
+        keepCols: ready[i].cols, lastRow: R.info.lastRow
+      };
     });
     var common = { dataStartRow: sr, selectorCol: sc };
     var result = XIO.filterMany(parts, common);
@@ -384,23 +457,27 @@
   // 檢查一份報表、更新它的卡片；回傳 { ok, values, cols }
   function checkReport(R, i, sr, sc) {
     var E = R.els;
-    var key = sr + ':' + sc + ':' + (R.ws ? R.ws.name : '');
+    var mode = modeOf(i);
+    var op = opOf(i);
+    var fc = colFor(i);             // 這份報表用哪一行篩選；「指定行」還沒填好時是 0
+    var key = sr + ':' + (fc || 1) + ':' + (R.ws ? R.ws.name : '');
     if (R.infoKey !== key) {
-      R.info = XIO.inspect(R.ws, { dataStartRow: sr, selectorCol: sc });
+      R.info = XIO.inspect(R.ws, { dataStartRow: sr, selectorCol: fc || 1 });
       R.infoKey = key;
     }
     var info = R.info;
-    var colName = XIO.numToCol(sc);
+    var colName = XIO.numToCol(fc || 1);
     var values = wantedValues(i);
     var wanted = {};
     values.forEach(function (v) { wanted[XIO.matchKey(v)] = true; });
     var parsed = keptCols(i);
     var keep = {};
     parsed.cols.forEach(function (c) { keep[c] = true; });
-    var out = { ok: false, values: values, cols: parsed.cols };
+    var out = { ok: false, values: values, cols: parsed.cols, col: fc, op: op };
 
-    E.selLabel.textContent = colName;
-    renderChips(R, i, info, wanted);
+    E.selLabel.textContent = XIO.numToCol(sc);
+    E.modeALabel.textContent = XIO.numToCol(sc);
+    if (fc) renderChips(R, i, info, wanted); else E.chips.textContent = '';
     ui.renderSheet(E.preview, R.ws, {
       headerEnd: sr - 1,
       lastRow: info.lastRow,
@@ -408,8 +485,10 @@
       rows: PREVIEW_ROWS,
       keep: keep,
       onToggle: function (c) { toggleColumn(i, c); },
-      selectorCol: sc,
-      wanted: values.length ? wanted : null,
+      selectorCol: fc || 1,
+      // 「不等於」時就算沒填值也要把空白的列變淡
+      wanted: !fc ? null : (op === 'neq' || values.length ? wanted : null),
+      wantedOp: op,
       caption: '報表 ' + (i + 1) + ' 原始內容（前 ' + PREVIEW_ROWS + ' 列資料）。共 ' + info.dataRows.toLocaleString('en-US') +
         ' 列資料、' + info.colCount + ' 行（到 ' + XIO.numToCol(info.colCount || 1) + ' 行）。'
     });
@@ -420,18 +499,29 @@
     }
 
     if (!info.dataRows) { msg('第 ' + sr + ' 列之後沒有資料。請確認上傳的檔案和工作表。', true); return out; }
-    if (!values.length) { msg('輸入 ' + colName + ' 行要等於的數值。'); return out; }
+    if (mode === 'col' && !fc) {
+      var fp = XIO.parseColumns(slot(i).fcol || '');
+      var badCol = fp.bad.length > 0 || fp.cols.length > 1;
+      msg(badCol ? '篩選的行只能填一個行號（英文字母），例如 D。' : '輸入要篩選的行，例如 D。', badCol);
+      return out;
+    }
+    if (!values.length && op === 'eq') { msg('輸入 ' + colName + ' 行要等於的數值。'); return out; }
     if (parsed.bad.length) {
       msg('看不懂「' + parsed.bad.join('、') + '」。行號請用英文字母，例如 B 或 U:Z。', true);
       return out;
     }
     if (!parsed.cols.length) { msg('輸入要保留的行。'); return out; }
 
-    var matched = 0;
-    values.forEach(function (v) {
-      var k = XIO.matchKey(v);
-      info.values.forEach(function (x) { if (x.key === k) matched += x.count; });
-    });
+    var hit = 0;                    // 篩選行「等於」輸入值的列數
+    info.values.forEach(function (x) { if (wanted[x.key]) hit += x.count; });
+    var nonBlank = info.dataRows - info.blankCount;
+    var matched = op === 'neq' ? nonBlank - hit : hit;
+    if (!matched && op === 'neq') {
+      msg(nonBlank
+        ? colName + ' 行除了 ' + values.join('、') + ' 之外沒有別的值（空白的列不算），一列都不會留下。'
+        : colName + ' 行從第 ' + sr + ' 列起都是空白，一列都不會留下。', true);
+      return out;
+    }
     if (!matched) {
       var seen = info.values.slice(0, 8).map(function (v) { return v.label; }).join('、');
       msg(colName + ' 行沒有等於 ' + values.join('、') + ' 的列。' +
@@ -441,6 +531,9 @@
 
     var text = '符合 ' + matched.toLocaleString('en-US') + ' 列（共 ' + info.dataRows.toLocaleString('en-US') +
       ' 列資料），保留 ' + parsed.cols.length + ' 行。';
+    if (mode === 'col' && info.blankCount) {
+      text += ' ' + colName + ' 行空白的 ' + info.blankCount.toLocaleString('en-US') + ' 列不要。';
+    }
     var beyond = parsed.cols.filter(function (c) { return c > info.colCount; });
     if (beyond.length) text += ' 注意：' + XIO.formatColumns(beyond) + ' 行在報表裡沒有資料。';
     msg(text, false, beyond.length > 0);
@@ -520,8 +613,9 @@
     var box = R.els.chips;
     box.textContent = '';
     if (!info.values.length && !info.blankCount) return;
-    var col = XIO.numToCol(selCol());
-    box.appendChild(h('span', { class: 'chips-label', text: '報表裡 ' + col + ' 行的值' }));
+    var col = XIO.numToCol(colFor(i));
+    box.appendChild(h('span', { class: 'chips-label',
+      text: '報表裡 ' + col + ' 行的值' + (opOf(i) === 'neq' ? '（點選的值會被排除）' : '') }));
     info.values.slice(0, MAX_CHIPS).forEach(function (v) {
       var on = !!wanted[v.key];
       box.appendChild(h('button', {
@@ -542,8 +636,9 @@
     var list = wantedValues(i);
     var kept = list.filter(function (x) { return XIO.matchKey(x) !== v.key; });
     if (kept.length === list.length) kept.push(v.label);
-    slot(i).values = kept.join(', ');
-    S.reports[i].els.values.value = slot(i).values;
+    setValueText(i, kept.join(', '));
+    var E = S.reports[i].els;
+    (modeOf(i) === 'col' ? E.fvalues : E.values).value = valueText(i);
     els.exportNote.textContent = '';
     recompute();
   }
