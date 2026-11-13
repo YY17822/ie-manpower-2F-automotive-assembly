@@ -1,8 +1,12 @@
 /*
  * 第 2 步：匯總
  *   算出 MPS 各月的預計總產量（Total），再用 Status 分成量產（M）和試產（R）的合計。
- *   表格放在篩選後的 MPS 資料下面：最後一列資料之後空一列開始，共三列，對齊各月的行；
- *   文字標籤在第一個月左邊那一行。每格都是公式。
+ *   第 1 步依類別分段（取像、車用、光機系統），匯總表有兩張：
+ *     取像＋車用   放在車用（沒有車用就是取像）最後一列資料之後空一列，兩段一起算
+ *     光機系統     放在光機系統最後一列資料之後空一列
+ *   （舊版沒有類別標題的檔案：整塊資料一張，放在最後一列資料之後空一列。）
+ *   每張三列，對齊各月的行；文字標籤在第一個月左邊那一行，再左邊一行跨三列註明是哪一組。每格都是公式。
+ *   取像＋車用的公式寫兩段範圍（中間的標題列、空列不算），例如 =SUM(E6:E40,E45:E80)。
  *
  *   當月（第一個月）比較特別：數量要先加上 WIP。
  *   以 Status 在 C 行、WIP 在 D 行、當月在 E 行、資料在第 5 到 74 列為例：
@@ -157,7 +161,7 @@
 
     panel.appendChild(h('div', { class: 'step-head' },
       h('h1', { text: '匯總' }),
-      h('p', { text: '在篩選後的 MPS 下面加上各月的預計總產量（Total），再用 Status 分成量產（M）和試產（R）的合計。當月會先加上 WIP 再算。每格都是公式。' })));
+      h('p', { text: '在篩選後的 MPS 加上各月的預計總產量（Total），再用 Status 分成量產（M）和試產（R）的合計。取像＋車用一張、光機系統一張，各放在那一組的下面。當月會先加上 WIP 再算。每格都是公式。' })));
 
     panel.appendChild(h('ol', { class: 'tasks' },
       h('li', { class: 'task' },
@@ -400,14 +404,20 @@
 
     var firstL = XIO.numToCol(monthCols[0]);
     var lastL = XIO.numToCol(monthCols[monthCols.length - 1]);
-    var hasError = plan.months.some(function (m) { return !!m.error; });
-    var endRow = plan.rows[plan.rows.length - 1];
-    setSummary('匯總會填在 ' + work.main.name + ' 工作表的第 ' + plan.totalRow + ' 到 ' + endRow +
-      ' 列（最後一列資料是第 ' + plan.lastRow + ' 列，空一列），' + firstL + ' 到 ' + lastL + ' 行，共 ' +
-      monthCols.length + ' 個月；文字標籤在 ' + XIO.numToCol(plan.labelCol) + ' 行。', false, hasError);
+    var badCols = {};
+    plan.tables.forEach(function (t) { t.months.forEach(function (m) { if (m.error) badCols[m.col] = true; }); });
+    var hasError = Object.keys(badCols).length > 0;
+    setSummary('匯總共 ' + plan.tables.length + ' 張，填在 ' + work.main.name + ' 工作表的' + plan.tables.map(function (t) {
+      return (t.label ? '「' + t.label + '」' : '') + '第 ' + t.totalRow + ' 到 ' + t.rows[t.rows.length - 1] + ' 列';
+    }).join('、') + '，' + firstL + ' 到 ' + lastL + ' 行，共 ' + monthCols.length + ' 個月；文字標籤在 ' +
+      XIO.numToCol(plan.labelCol) + ' 行。', false, hasError);
+    if (plan.legacy) {
+      els.notes.appendChild(h('li', { class: 'is-warn' },
+        '這個檔案的 MPS 沒有【取像】【車用】【光機系統】的類別標題（舊版第 1 步匯出的），整塊資料只做一張匯總。'));
+    }
 
     if (hasError) {
-      var bad = plan.months.filter(function (m) { return !!m.error; }).map(function (m) { return XIO.numToCol(m.col); });
+      var bad = Object.keys(badCols).map(function (c) { return XIO.numToCol(+c); });
       els.notes.appendChild(h('li', { class: 'is-warn' },
         bad.join('、') + ' 行有不是數字的格子，Excel 裡這幾個月的匯總會顯示錯誤。請先檢查 MPS 的數量。'));
     }
@@ -426,13 +436,13 @@
         '目前選了 ' + monthCols.length + ' 個月份，通常是 ' + MONTH_COUNT + ' 個（當月加往後五個月）。'));
     }
 
-    renderResult(plan, labels, opts);
+    plan.tables.forEach(function (t) { renderResult(t, labels, opts); });
     renderOthers(plan);
     els.exportBtn.disabled = false;
     els.nextBtn.disabled = false;
 
     // 給下一步用（欄位和第 1 步的結果一樣，下一步可以直接接著做）
-    var rows = plan.lastRow - plan.firstRow + 1;
+    var rows = plan.count;
     IEApp.state.mpsTotals = {
       sourceName: src.name,
       outName: outputName(src),
@@ -460,7 +470,7 @@
     return h('th', { class: 'colhead', scope: 'col', text: text });
   }
 
-  // 匯總列算出來的數字，以及當月和下一個月填入的公式
+  // 一張匯總表算出來的數字，以及當月和下一個月填入的公式（plan = planMpsTotals(...).tables[k]）
   function renderResult(plan, labels, opts) {
     var head = h('tr', null,
       h('th', { class: 'colhead', scope: 'col', text: '列' }),
@@ -484,8 +494,10 @@
       body.appendChild(tr);
     });
 
-    els.result.appendChild(h('p', { class: 'sheet-caption', text: '匯總結果。' }));
-    els.result.appendChild(h('div', { class: 'sheet-scroll', tabindex: '0', role: 'group', 'aria-label': '匯總結果' },
+    var name = plan.label ? '「' + plan.label + '」' : '';
+    els.result.appendChild(h('p', { class: 'sheet-caption', text: name + '匯總結果' +
+      '（資料在第 ' + plan.ranges.map(function (x) { return x[0] + '–' + x[1]; }).join('、') + ' 列）。' }));
+    els.result.appendChild(h('div', { class: 'sheet-scroll', tabindex: '0', role: 'group', 'aria-label': name + '匯總結果' },
       h('table', { class: 'sheet is-result' }, h('thead', null, head), body)));
 
     var names = [LABELS.total].concat(GROUPS.map(function (gr) { return gr.label; }));

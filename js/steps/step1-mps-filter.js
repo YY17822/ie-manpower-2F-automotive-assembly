@@ -9,8 +9,12 @@
  *      兩種方式各報表可以混用
  *      ——各報表保留的行位置可以不同，但保留的行數和順序（相對位置）要一樣
  *   3. 指定 Status 在哪一行（區分量產、試產，後面總表會用到）
- *   4. 匯出一份新的 Excel：表頭用報表 1 的（含合併儲存格），
- *      各報表符合條件的列依序往下接；同一個料號出現在不同報表就保留成好幾列
+ *   4. 每份報表指定類別：取像、車用、光機系統（一定要選，不會自動猜）
+ *   5. 匯出一份新的 Excel：表頭用報表 1 的（含合併儲存格），底下依類別分段（XIO.filterSections）：
+ *        【取像】 取像的 MPS → 空 3 列 → 【車用】 車用的 MPS → 空 1 列、3 列給第 2 步的匯總表（取像＋車用）
+ *        → 空 6 列 → 【光機系統】 光機系統的 MPS → 空 1 列給第 2 步的匯總表（光機系統）
+ *      類別標題跨所有保留的行合併、粗體置中、底色 #E9C46A。同一類有好幾份時照上傳順序往下接，中間不畫線；
+ *      同一個料號出現在不同報表就保留成好幾列。這個月沒有檔案的類別整段不放。
  *
  * 做完之後把結果放在 IEApp.state.mpsFiltered，第 2 步直接拿來用。
  * Status 在新檔的哪一行：IEApp.state.mpsFiltered.statusCol（數字），
@@ -28,11 +32,13 @@
 
   var STORE_KEY = 'step1';                    // 共用設定的組名（存進 Supabase 的 key 是 step1.xxx）
   var PREVIEW_ROWS = 8;     // 預覽顯示幾列資料
+  var OUT_PREVIEW_ROWS = 60; // 匯出後的樣子顯示幾列（要看得到各段）
   var MAX_CHIPS = 24;
   var MAX_FZ_LIST = 300;    // 模糊比對的預覽最多列出幾列
   var STATUS_GUESS = /status|狀態/i;
 
   // reports：每份報表各自的條件，依上傳順序（報表 1、報表 2…），下個月照同樣順序上傳就會自動帶入
+  //   cat：類別（'image' 取像、'auto' 車用、'optics' 光機系統，見 XIO.MPS_SECTIONS）
   // statusPos：Status 是「第幾個保留的行」（1 起算），也就是新檔的第幾行
   var DEFAULTS = { startRow: 5, selCol: 'A', reports: [], statusPos: '' };
 
@@ -59,6 +65,14 @@
     // Status 在新檔的哪一行（英文字母）存在 step1-2-6，和第 2、6 步共用（ui.statusCol）
     var keep = { startRow: settings.startRow, selCol: settings.selCol, reports: settings.reports, statusPos: settings.statusPos };
     try { IEApp.settings.write(STORE_KEY, keep); } catch (e) { /* 存不了就算了 */ }
+  }
+  function catOf(i) {
+    var c = slot(i).cat;
+    return XIO.MPS_SECTIONS.some(function (s) { return s.key === c; }) ? c : '';
+  }
+  function catLabel(key) {
+    var s = XIO.MPS_SECTIONS.filter(function (x) { return x.key === key; })[0];
+    return s ? s.label : '';
   }
   function slot(i) {
     while (settings.reports.length <= i) settings.reports.push({ values: '', cols: '' });
@@ -154,13 +168,13 @@
 
     panel.appendChild(h('div', { class: 'step-head' },
       h('h1', { text: '篩選 MPS 報表' }),
-      h('p', { text: '上傳好幾份 MPS 報表，各自依選取條件留下要的列和要的行，往下接成一份新的 Excel。表頭（第 1–4 列）用報表 1 的，原樣保留。' })));
+      h('p', { text: '上傳好幾份 MPS 報表，指定各自是取像、車用還是光機系統，再依選取條件留下要的列和要的行，依類別分段排成一份新的 Excel。表頭（第 1–4 列）用報表 1 的，原樣保留。' })));
 
     panel.appendChild(h('ol', { class: 'tasks' },
       h('li', { class: 'task' },
         h('h2', { text: '上傳 MPS 報表' }),
         els.drop.el, els.fileList, els.fileMsg,
-        h('p', { class: 'hint', text: '依上傳順序叫報表 1、報表 2…，合併時也照這個順序往下接。每份報表輸入的條件會記住，下個月照同樣順序上傳就會自動帶入。' }),
+        h('p', { class: 'hint', text: '依上傳順序叫報表 1、報表 2…。每份報表都要選類別（取像、車用、光機系統）；新檔裡依 取像 → 車用 → 光機系統 分段，同一類有好幾份時照上傳順序往下接。每份報表的類別和條件會記住，下個月照同樣順序上傳就會自動帶入。' }),
         h('details', { class: 'advanced' },
           h('summary', { text: '報表版面不一樣時' }),
           h('div', { class: 'field-row' },
@@ -258,8 +272,19 @@
 
     els.fileList.textContent = '';
     S.reports.forEach(function (R, i) {
+      var cat = h('select', { id: 'f-r' + R.id + '-cat', class: 'in-select cat-select', 'aria-label': '報表 ' + (i + 1) + ' 的類別' });
+      cat.appendChild(h('option', { value: '', text: '選擇類別' }));
+      XIO.MPS_SECTIONS.forEach(function (s) { cat.appendChild(h('option', { value: s.key, text: s.label })); });
+      cat.value = catOf(i);
+      if (!cat.value) cat.classList.add('is-empty');
+      cat.addEventListener('change', function () {
+        slot(i).cat = cat.value;
+        els.exportNote.textContent = '';
+        renderReports();
+      });
       els.fileList.appendChild(h('li', { class: 'report-item' },
         h('span', { class: 'report-tag', text: '報表 ' + (i + 1) }),
+        cat,
         h('span', { class: 'report-name', text: R.fileName }),
         i > 0 ? h('button', { type: 'button', class: 'btn-link', text: '往上移', onclick: function () { moveUp(i); } }) : null,
         h('button', { type: 'button', class: 'btn-link', text: '移除', onclick: function () { removeReport(i); } })));
@@ -402,6 +427,7 @@
     return h('section', { class: 'report-card', 'aria-labelledby': pre + 'title' },
       h('h3', { id: pre + 'title', class: 'report-title' },
         h('span', { class: 'report-tag', text: '報表 ' + (i + 1) }),
+        catOf(i) ? h('span', { class: 'cat-tag', text: catLabel(catOf(i)) }) : h('span', { class: 'cat-tag is-empty', text: '還沒選類別' }),
         h('span', { class: 'report-name', text: R.fileName })),
       h('div', { class: 'field-row', hidden: R.workbook.worksheets.length < 2 },
         h('label', { for: pre + 'sheet', text: '工作表' }), E.sheet),
@@ -465,25 +491,45 @@
     if (!sp || sp > n0) { setSummary('選擇 Status 在哪一行。'); return; }
     ui.statusCol.set(XIO.numToCol(sp));       // 第 2 步、第 6 步共用
 
+    var noCat = [];
+    S.reports.forEach(function (R, i) { if (!catOf(i)) noCat.push(i + 1); });
+    if (noCat.length) {
+      setSummary('報表 ' + noCat.join('、') + ' 還沒選類別（取像、車用、光機系統）。在上面「上傳 MPS 報表」的清單裡選。', true);
+      return;
+    }
+
     var parts = S.reports.map(function (R, i) {
       return {
-        ws: R.ws, values: ready[i].values, op: ready[i].op, selectorCol: ready[i].col,
+        ws: R.ws, cat: catOf(i), values: ready[i].values, op: ready[i].op, selectorCol: ready[i].col,
         fuzzy: ready[i].fuzzy, exclude: ready[i].exclude,
         keepCols: ready[i].cols, lastRow: R.info.lastRow
       };
     });
     var common = { dataStartRow: sr, selectorCol: sc };
-    var result = XIO.filterMany(parts, common);
+    var result = XIO.filterSections(parts, common);
     S.result = result;
 
     var text = '合併後共 ' + result.matchedRows.toLocaleString('en-US') + ' 列資料、' + n0 + ' 行；Status 在 ' +
       XIO.numToCol(sp) + ' 行。';
     setSummary(text);
-    result.parts.forEach(function (p, i) {
+    result.sections.forEach(function (s) {
+      var who = [];
+      result.parts.forEach(function (p, i) { if (p.cat === s.key) who.push('報表 ' + (i + 1)); });
       els.parts.appendChild(h('li', {
-        text: '報表 ' + (i + 1) + '（' + S.reports[i].fileName + '）：' + p.matched.toLocaleString('en-US') + ' 列' +
-          (p.matched ? '，在新檔第 ' + p.firstRow + '–' + p.lastRow + ' 列' : '')
+        text: '【' + s.label + '】標題在第 ' + s.titleRow + ' 列，' + who.join('、') + ' 共 ' + s.matched.toLocaleString('en-US') + ' 列' +
+          (s.matched ? '，在第 ' + s.firstRow + '–' + s.lastRow + ' 列' : '')
       }));
+    });
+    var lastSec = result.sections[result.sections.length - 1];
+    var groupsShown = {};
+    result.sections.forEach(function (s, k) {
+      var nextSec = result.sections[k + 1];
+      if (nextSec && nextSec.group === s.group) return;
+      if (groupsShown[s.group]) return;
+      groupsShown[s.group] = true;
+      els.parts.appendChild(h('li', { class: 'hint-item',
+        text: XIO.MPS_SECTION_GROUPS[s.group].label + '的匯總表（第 2 步做）會放在第 ' + (s.lastRow + 2) + '–' + (s.lastRow + 4) + ' 列' +
+          (s === lastSec ? '。' : '，下面空 6 列才是下一段。') }));
     });
 
     var mark = {}; mark[sp] = true;
@@ -491,9 +537,9 @@
       headerEnd: result.headerEnd,
       lastRow: result.lastRow,
       colCount: result.colCount,
-      rows: PREVIEW_ROWS,
+      rows: Math.min(result.lastRow - result.headerEnd, OUT_PREVIEW_ROWS),
       keep: mark,
-      caption: '匯出後的樣子（前 ' + PREVIEW_ROWS + ' 列資料，Status 那一行用螢光筆標示）。'
+      caption: '匯出後的樣子（前 ' + Math.min(result.lastRow - result.headerEnd, OUT_PREVIEW_ROWS) + ' 列，Status 那一行用螢光筆標示；匯總表第 2 步才會放進去）。'
     });
     els.exportBtn.disabled = false;
     els.nextBtn.disabled = false;
@@ -506,7 +552,8 @@
       matchedRows: result.matchedRows,
       headerEnd: result.headerEnd,
       statusCol: sp,
-      build: function () { return XIO.filterMany(parts, common).workbook; }
+      sections: result.sections,
+      build: function () { return XIO.filterSections(parts, common).workbook; }
     };
   }
 

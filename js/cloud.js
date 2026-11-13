@@ -5,12 +5,12 @@
  *   資料庫  Supabase 專案（js/config.js 的 SUPABASE_PUBLIC_URL / SUPABASE_PUBLISHABLE_KEY）
  *   位置    schema ie_manpower 的 settings 表，一筆 = (app, key) → value(jsonb)
  *           app 是這個 PWA 的專案代號（PROJECT_ID）
- *           key 是「步驟.輸入項目」，例如 step9.otHours（第 9 步的每日加班小時）
+ *           key 是「步驟.輸入項目」，例如 step8.otHours（第 8 步總表的每日加班小時）
  *           一個輸入項目一筆；6 個月這種一起看的值放在同一筆（value 是陣列）
  *           這樣兩個人同時改同一步的不同項目，也不會互相蓋掉
  *   登入    Supabase Auth 的 email + 密碼（帳號由管理者在 Supabase 後台建立，不開放註冊）
  *
- * 各步驟用 IEApp.settings.read(步驟) / write(步驟, 物件) 讀寫一整步的設定（例如 'step9'），
+ * 各步驟用 IEApp.settings.read(步驟) / write(步驟, 物件) 讀寫一整步的設定（例如 'step8'），
  * 這裡負責拆成一個個輸入項目上傳、下載時再組回去：
  *   讀    一律讀這台電腦的本機備份（localStorage），所以是同步的、離線也能用
  *   寫    先存本機，再在背景上傳 Supabase（連續打字時等停下來 1 秒才傳）
@@ -37,22 +37,39 @@
 
   var AUTH_KEY = IEApp.storeKey('_auth');         // supabase-js 存登入資訊的位置（只存這台電腦）
   var OLD_SESSION_KEY = IEApp.storeKey('_session'); // 版本 31 以前自己存的登入資訊，第一次打開時搬給 supabase-js
-  var SYNC_KEY = IEApp.storeKey('_sync');         // { dirty: { 'step9.otHours': true }, meta: { 'step9.otHours': { by, at } } }
+  var SYNC_KEY = IEApp.storeKey('_sync');         // { dirty: { 'step8.otHours': true }, meta: { 'step8.otHours': { by, at } } }
   var PUSH_DELAY = 1000;
   var TIMEOUT = 10000;
 
   // 舊的設定組名稱 → 現在的（組名統一用步驟編號）。本機備份和雲端的舊資料都照這張表搬
   // statusCol（第 1、2、6 步共用的 Status 行）以前存的是一個字串（例如 "C"），搬的時候包成 { statusCol: "C" }
+  // 很舊的 step6 是 RMA，RMA 已經拿掉，對到 null（不搬）
   var LEGACY_GROUPS = {
     totals: 'step2', columns: 'step2-5', statusCol: 'step1-2-6', step3: 'step4', step4: 'step5', step5: 'step6',
-    step6: 'step7', manpower: 'step8', report: 'step9'
+    step6: null, manpower: 'step7', report: 'step8'
   };
-  // 舊的設定組裡，新版不再存的欄位（step1.statusCol 已經改存在 step1-2-6；step9.effVer 是舊版的內部記號）
-  var LEGACY_DROP = { step1: ['statusCol'], step9: ['effVer'] };
+  // 舊的設定組裡，新版不再存的欄位（step1.statusCol 已經改存在 step1-2-6；step8.effVer 是舊版總表的內部記號）
+  var LEGACY_DROP = { step1: ['statusCol'], step8: ['effVer'] };
+  // 版本 12 拿掉第 7 步 RMA，後面兩步往前一號（匯入人力報表 step8 → step7、總表 step9 → step8）。
+  // 這幾個組名以前的內容意思不一樣，不搬：這台電腦裡的直接清掉，請重新輸入（Supabase 上的舊資料請照 README 刪掉）
+  var RENUMBERED_GROUPS = ['step7', 'step8', 'step9'];
+  // 重新編號的組只認這些欄位：Supabase 上還留著的舊意思項目（RMA 的 step7.items、舊人力報表的 step8.rows、
+  // 舊總表的 step9.*）同步時一律不理，也不會被當成新的設定。之後這兩步加新的輸入項目時，要一起加到這裡。
+  var GROUP_FIELDS = {
+    step7: ['rows', 'lastFirstCol'],
+    step8: ['title', 'otHours', 'otRate', 'yoLimit', 'newModels', 'reworkPeople', 'offline',
+      'workMinutes', 'effMass', 'effTrial', 'effRework', 'attendance'],
+    step9: []
+  };
+  function allowedKey(key) {
+    var k = splitKey(key);
+    var f = k ? GROUP_FIELDS[k.group] : null;
+    return !f || f.indexOf(k.field) >= 0;
+  }
   // 新格式裡改過名的組（版本 28 用過 shared，版本 29 起改成寫明是哪兩步共用）
   var RENAMED_GROUPS = { shared: 'step2-5' };
   var LAYOUT_KEY = IEApp.storeKey('_layout');      // 本機備份的格式版本
-  var LAYOUT = 3;                                  // 2 = 組名用步驟編號、一個輸入項目一筆；3 = shared 改名 step2-5
+  var LAYOUT = 4;                                  // 2 = 組名用步驟編號、一個輸入項目一筆；3 = shared 改名 step2-5；4 = 拿掉 RMA，step7、step8 重新編號
 
   var client = null;           // supabase-js 的連線
   var session = null;          // supabase-js 的登入資訊（session.user.email 是登入者）
@@ -252,7 +269,7 @@
         // 舊格式（一步一筆，key 沒有「.」）：轉成一個項目一筆，並標成要用新格式上傳；雲端已有新格式的項目以新格式為準
         var legacy = (rows || []).filter(function (r) { return !splitKey(r.key); });
         var renamed = (rows || []).filter(function (r) { var k = splitKey(r.key); return k && RENAMED_GROUPS[k.group]; });
-        var current = (rows || []).filter(function (r) { var k = splitKey(r.key); return k && !RENAMED_GROUPS[k.group]; });
+        var current = (rows || []).filter(function (r) { var k = splitKey(r.key); return k && !RENAMED_GROUPS[k.group] && allowedKey(r.key); });
         current.forEach(function (r) { remote[r.key] = true; });
         // 改過名的組（例如 shared.wipCol → step2-5.wipCol）：雲端還沒有新名稱的項目才用舊的，並用新名稱上傳
         renamed.forEach(function (r) {
@@ -264,11 +281,12 @@
           s.dirty[key] = true;
         });
         legacy.forEach(function (r) {
+          if (LEGACY_GROUPS[r.key] === null) return;   // 已經拿掉的步驟（RMA）
           var g = LEGACY_GROUPS[r.key] || r.key;
           var v = r.value && typeof r.value === 'object' && !Array.isArray(r.value) ? r.value : {};
           Object.keys(v).forEach(function (field) {
             var key = itemKey(g, field);
-            if (remote[key] || s.dirty[key]) return;
+            if (!allowedKey(key) || remote[key] || s.dirty[key]) return;
             group(g)[field] = v[field];
             s.dirty[key] = true;
           });
@@ -524,14 +542,26 @@
   (function migrateLayout() {
     var layout = readJson(LAYOUT_KEY, 0);
     if (layout >= LAYOUT) return;
-    if (layout === 2) {                            // 版本 28 → 29：只有 shared 改名
-      Object.keys(RENAMED_GROUPS).forEach(function (name) {
-        var raw = readLocal(IEApp.storeKey(name));
-        var to = IEApp.storeKey(RENAMED_GROUPS[name]);
-        if (raw !== null && readLocal(to) === null) writeLocal(to, raw);
-        writeLocal(IEApp.storeKey(name), null);
-      });
-      writeLocal(SYNC_KEY, null);
+    if (layout === 2 || layout === 3) {
+      if (layout === 2) {                          // 版本 28 → 29：shared 改名
+        Object.keys(RENAMED_GROUPS).forEach(function (name) {
+          var raw = readLocal(IEApp.storeKey(name));
+          var to = IEApp.storeKey(RENAMED_GROUPS[name]);
+          if (raw !== null && readLocal(to) === null) writeLocal(to, raw);
+          writeLocal(IEApp.storeKey(name), null);
+        });
+      }
+      // 版本 12：拿掉 RMA，step7、step8、step9 的舊內容清掉，同步紀錄裡這幾組的也一起清掉（不會再傳上去）
+      RENUMBERED_GROUPS.forEach(function (name) { writeLocal(IEApp.storeKey(name), null); });
+      if (layout === 2) {
+        writeLocal(SYNC_KEY, null);
+      } else {
+        var s = syncState();
+        [s.dirty, s.meta].forEach(function (m) {
+          Object.keys(m).forEach(function (key) { if (inGroups(key, RENUMBERED_GROUPS)) delete m[key]; });
+        });
+        saveSyncState(s);
+      }
       writeLocal(LAYOUT_KEY, String(LAYOUT));
       return;
     }
@@ -542,6 +572,7 @@
     });
     Object.keys(old).forEach(function (name) { writeLocal(IEApp.storeKey(name), null); });
     Object.keys(old).forEach(function (name) {
+      if (LEGACY_GROUPS[name] === null) return;    // 已經拿掉的步驟（RMA）
       var to = IEApp.storeKey(LEGACY_GROUPS[name]);
       var raw = old[name];
       if (name === 'statusCol') {                  // 以前存字串，現在一組一個物件

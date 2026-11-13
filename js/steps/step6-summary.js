@@ -1,6 +1,9 @@
 /*
  * 第 6 步：需求工時匯總
- *   在需求工時那一塊的下面（最後一列資料之後空一列）加三列，每格都是公式。
+ *   在需求工時那幾行的下面加三列，每格都是公式。和第 2 步一樣每一組一張、放在同一列：
+ *     取像＋車用   車用（沒有車用就是取像）最後一列資料之後空一列，兩段一起算（公式寫兩段範圍）
+ *     光機系統     光機系統最後一列資料之後空一列
+ *   （舊版沒有類別標題的檔案：整塊資料一張，最後一列資料之後空一列。）
  *   以 Status 在 C 行、需求工時在 N 行、資料在第 5 到 74 列為例：
  *
  *     Production 總需求工時   =SUM(N5:N74)                     每月所有料號加總
@@ -134,14 +137,14 @@
     els.others = h('div', { class: 'sheet-area' });
     els.exportBtn = h('button', { type: 'button', class: 'btn-primary', disabled: true, text: '匯出 Excel', onclick: onExport });
     els.nextBtn = h('button', {
-      type: 'button', class: 'btn-secondary', disabled: true, text: '下一步：RMA 需求工時',
-      onclick: function () { IEApp.go('rma'); }
+      type: 'button', class: 'btn-secondary', disabled: true, text: '下一步：匯入人力報表',
+      onclick: function () { IEApp.go('manpower'); }
     });
     els.exportNote = h('span', { class: 'export-note', 'aria-live': 'polite' });
 
     panel.appendChild(h('div', { class: 'step-head' },
       h('h1', { text: '需求工時匯總' }),
-      h('p', { text: '在需求工時下面加上每個月正常生產的總需求工時（Production），再用 Status 分成量產（M）和試產（R）的合計。每格都是公式。' })));
+      h('p', { text: '在需求工時下面加上每個月正常生產的總需求工時（Production），再用 Status 分成量產（M）和試產（R）的合計。和第 2 步一樣，取像＋車用一張、光機系統一張，放在同一列。每格都是公式。' })));
 
     panel.appendChild(h('ol', { class: 'tasks' },
       h('li', { class: 'task' },
@@ -287,21 +290,24 @@
       setSummary('MPS 工作表裡找不到「需求工時」。請先做第 5 步計算需求工時。', true);
       return;
     }
-    if (!plan.lastRow) {
+    if (!plan.count) {
       setSummary('第 ' + sr + ' 列之後沒有料號。請確認上傳的檔案。', true);
       return;
     }
 
     var firstL = XIO.numToCol(plan.startCol);
     var lastL = XIO.numToCol(plan.startCol + plan.width - 1);
-    var hasError = plan.months.some(function (m) { return !!m.error; });
-    setSummary('匯總會填在 ' + work.main.name + ' 工作表的第 ' + plan.totalRow + ' 到 ' + plan.restRow +
-      ' 列（最後一列資料是第 ' + plan.lastRow + ' 列，空一列），' + firstL + ' 到 ' + lastL + ' 行，共 ' +
-      plan.width + ' 個月。', false, hasError);
+    var badMonths = {};
+    plan.tables.forEach(function (t) {
+      t.months.forEach(function (m) { if (m.error) badMonths[m.col] = XIO.numToCol(m.col) + (m.header ? '（' + m.header + '）' : ''); });
+    });
+    var hasError = Object.keys(badMonths).length > 0;
+    setSummary('匯總共 ' + plan.tables.length + ' 張，填在 ' + work.main.name + ' 工作表的' + plan.tables.map(function (t) {
+      return (t.label ? '「' + t.label + '」' : '') + '第 ' + t.totalRow + ' 到 ' + t.rows[t.rows.length - 1] + ' 列';
+    }).join('、') + '，' + firstL + ' 到 ' + lastL + ' 行，共 ' + plan.width + ' 個月。', false, hasError);
 
     if (hasError) {
-      var bad = plan.months.filter(function (m) { return !!m.error; })
-        .map(function (m) { return XIO.numToCol(m.col) + (m.header ? '（' + m.header + '）' : ''); });
+      var bad = Object.keys(badMonths).map(function (k) { return badMonths[k]; });
       els.notes.appendChild(h('li', { class: 'is-warn' },
         bad.join('、') + ' 行有算不出來的格子（例如 #DIV/0!），Excel 裡這幾個月的匯總也會顯示錯誤。請先回第 4 步處理。'));
     }
@@ -317,7 +323,7 @@
         '有 ' + plan.others.length + ' 列的 Status 不是 M 也不是 R，只會算進 Production，不算進量產、試產。清單在下面。'));
     }
 
-    renderResult(plan, opts);
+    plan.tables.forEach(function (t) { renderResult(t, opts); });
     renderOthers(plan);
     els.exportBtn.disabled = false;
 
@@ -329,9 +335,7 @@
       keyCol: keyCol,
       demandCol: plan.startCol,
       monthCount: plan.width,
-      totalRow: plan.totalRow,
-      groupRows: plan.groupRows,
-      restRow: plan.restRow,
+      tables: plan.tables.map(function (t) { return { label: t.label, totalRow: t.totalRow, groupRows: t.groupRows }; }),
       statusCol: statusCol,
       build: function () { return buildWorkbook(src, opts); }
     };
@@ -351,7 +355,7 @@
     return h('th', { class: 'colhead', scope: 'col', text: XIO.numToCol(m.col) + (m.header ? '　' + m.header : '') });
   }
 
-  // 三個匯總列算出來的數字，以及第一個月填入的公式
+  // 一張匯總表（三列）算出來的數字，以及第一個月填入的公式（plan = planSummary(...).tables[k]）
   function renderResult(plan, opts) {
     var head = h('tr', null,
       h('th', { class: 'colhead', scope: 'col', text: '列' }),
@@ -375,8 +379,10 @@
       body.appendChild(tr);
     });
 
-    els.result.appendChild(h('p', { class: 'sheet-caption', text: '匯總結果。' }));
-    els.result.appendChild(h('div', { class: 'sheet-scroll', tabindex: '0', role: 'group', 'aria-label': '匯總結果' },
+    var name = plan.label ? '「' + plan.label + '」' : '';
+    els.result.appendChild(h('p', { class: 'sheet-caption', text: name + '匯總結果' +
+      '（資料在第 ' + plan.ranges.map(function (x) { return x[0] + '–' + x[1]; }).join('、') + ' 列）。' }));
+    els.result.appendChild(h('div', { class: 'sheet-scroll', tabindex: '0', role: 'group', 'aria-label': name + '匯總結果' },
       h('table', { class: 'sheet is-result' }, h('thead', null, head), body)));
 
     var m0 = plan.months[0];

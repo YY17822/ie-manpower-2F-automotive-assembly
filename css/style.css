@@ -410,3 +410,10 @@ button.step:hover { background: rgba(11, 110, 105, 0.07); }
 .fz-val { flex: none; max-width: 45%; overflow-wrap: anywhere; font-weight: 700; }
 .fz-val mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2px; }
 .fz-ctx { color: var(--ink-2); }
+
+/* 第 1 步：報表的類別（取像、車用、光機系統） */
+.cat-select { width: auto; min-width: 7.5rem; }
+.cat-select.is-empty { border-color: var(--warn); }
+.cat-tag { display: inline-block; padding: 0.0625rem 0.5rem; border-radius: 2px; background: #E9C46A; color: var(--ink); font-size: 0.875rem; font-weight: 700; }
+.cat-tag.is-empty { background: none; border: 1px dashed var(--warn); color: var(--warn); font-weight: 400; }
+.notes li.hint-item { color: var(--ink-2); }

@@ -9,6 +9,8 @@
   var EXCELJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js';
 
   // 整個流程的步驟。還沒開發的步驟先列出來，做到時再補上對應的檔案。
+  // 原本的第 7 步「RMA 需求工時」已經拿掉（之後改成在第 1 步挑選 RMA 的列）。
+  // 後面兩步往前一號：匯入人力報表 = 第 7 步（step7-manpower.js、組名 step7）、總表 = 第 8 步（step8-report.js、組名 step8）。
   var STEPS = [
     { id: 'mps-filter', title: '篩選 MPS 報表', note: '挑出要算的料號與月份' },
     { id: 'mps-totals', title: '匯總', note: '各月預計產量、量產／試產' },
@@ -16,7 +18,6 @@
     { id: 'ct-lookup', title: '帶入標準工時 CT.', note: '用料號到 P003 查工時' },
     { id: 'demand-hours', title: '計算需求工時', note: '各月產量 × CT.' },
     { id: 'summary', title: '需求工時匯總', note: '每月總工時、量產／試產' },
-    { id: 'rma', title: 'RMA 需求工時', note: '重工數量 × CT.' },
     { id: 'manpower', title: '匯入人力報表', note: '未來六個月的人力預計' },
     { id: 'report', title: '總表', note: '各月人力需求總覽' }
   ];
@@ -56,9 +57,8 @@
     'js/steps/step4-ct-lookup.js',
     'js/steps/step5-demand-hours.js',
     'js/steps/step6-summary.js',
-    'js/steps/step7-rma.js',
-    'js/steps/step8-manpower.js',
-    'js/steps/step9-report.js'
+    'js/steps/step7-manpower.js',
+    'js/steps/step8-report.js'
   ];
   // 各步驟用到的共用設定（畫面上「上次由誰修改」看這幾個）
   // step1-2-6 是第 1、2、6 步共用的 Status 行；step2-5 是第 2、5 步共用的 WIP／月份行
@@ -68,9 +68,8 @@
     'ct-lookup': ['step4'],
     'demand-hours': ['step5', 'step2-5'],
     'summary': ['step6', 'step1-2-6'],
-    'rma': ['step7'],
-    'manpower': ['step8'],
-    'report': ['step9']
+    'manpower': ['step7'],
+    'report': ['step8']
   };
 
   var registry = {};

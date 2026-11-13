@@ -1,5 +1,6 @@
 /*
- * 第 9 步：總表
+ * 第 8 步：總表
+ *   （拿掉 RMA 之前是第 9 步、組名 step9；改成第 8 步之後組名是 step8，以前存的設定要重新輸入）
  *   在活頁簿裡新增「總表」工作表。
  *
  *   版面（B 到 J 行、第 2 到 28 列）：
@@ -19,9 +20,10 @@
  *
  *   從 MPS 工作表抓的列（都是公式；用標籤文字找出是哪一列）：
  *     MPS(PCS) 量產、試產    ← 第 2 步匯總的「量產」「試產」那一列（當月已含 WIP）
- *     MPS(PCS) RMA          ← 第 7 步 RMA 各項目數量的合計，例如 =120+300
+ *     （匯總表有兩張：取像＋車用、光機系統，兩張的同一列相加，例如 ='MPS'!E42+'MPS'!E95）
+ *     MPS(PCS) RMA          ← 原本的第 7 步 RMA 已經拿掉（之後改成在第 1 步挑選 RMA 的列），先留空白
  *     需求工時-量產、-試產   ← 第 6 步「量產總需求工時」「試產總需求工時」
- *     需求工時-重工         ← 第 7 步「RMA總需求工時」
+ *     需求工時-重工         ← 同上，先留空白
  *
  *   使用者在畫面上輸入的列：
  *     平日工作天數     各月自己輸入（每個月不同，不記住）
@@ -35,7 +37,7 @@
  *     假日工作天數     =(46-D12*2)/8
  *     需求人力 On line      =(D9/D16+D10/D17+D11/D18)/(D12+D13)/(D14+D15)/D19，顯示到小數點第一位
  *     需求人力 TTL          =D20+D21+D22
- *   從「人力」工作表抓的列（第 8 步確認的列和當月那一行，例如 ='人力'!D4）：
+ *   從「人力」工作表抓的列（第 7 步確認的列和當月那一行，例如 ='人力'!D4）：
  *     現有人力 On line ← Online；Off line ← Off line（直接）
  *     現有人力 TTL     =D24+D25
  *   最後兩列：
@@ -46,8 +48,8 @@
  *   假日工作天數改用 78。78 可以在畫面上改（會記住）。其他輸入和抓來的數值都參照第一張表。
  *
  *   來源有兩種：
- *     a. 剛才第 8 步做好的結果（不用先匯出，直接沿用）
- *     b. 上傳之前第 8 步匯出的檔案
+ *     a. 剛才第 7 步做好的結果（不用先匯出，直接沿用）
+ *     b. 上傳之前第 7 步匯出的檔案
  *
  * 做完之後把結果放在 IEApp.state.withReport。
  */
@@ -64,12 +66,12 @@
   var TITLE = '需求工時';
   var SUFFIX = '_總表';
   var EXTRA = ['P003', '人力', SHEET_NAME];
-  var STORE_KEY = 'step9';
+  var STORE_KEY = 'step8';
   var MONTHS = XIO.REPORT.months;
   var DEFAULT_WORK_MINUTES = '480';
 
   var S = {
-    upload: null,         // 上傳的第 8 步檔案 { name, buffer, sheets }
+    upload: null,         // 上傳的第 7 步檔案 { name, buffer, sheets }
     preferUpload: false,
     work: null,           // 拿來預覽的活頁簿 { src, loading, error, wb, main }
     inputs: null          // 輸入框裡的文字 { title, weekdays: [6], workMinutes: [6], effMass: [6], effTrial: [6], effRework: [6], attendance: [6], otHours, otRate, yoLimit }
@@ -232,15 +234,15 @@
     return refs;
   }
 
-  // 現有人力：從「人力」工作表抓第 8 步確認過的那幾列
+  // 現有人力：從「人力」工作表抓第 7 步確認過的那幾列
   var MP_SHEET = '人力';
-  var MP_STORE_KEY = 'step8';                // 第 8 步的設定
+  var MP_STORE_KEY = 'step7';                // 第 7 步（匯入人力報表）的設定
   var MP_LINKS = [
     { key: 'haveOnline', item: 'online', label: 'Online' },
     { key: 'haveOffline', item: 'offDirect', label: 'Off line（直接）' }
   ];
 
-  // 第 8 步確認的位置：剛做完第 8 步就用它的；上傳的檔案用第 8 步記在瀏覽器裡的位置
+  // 第 7 步確認的位置：剛做完第 7 步就用它的；上傳的檔案用第 7 步記在瀏覽器裡的位置
   function manpowerPositions(src) {
     if (src.kind === 'prev' && src.prev.rows && src.prev.firstMonthCol) {
       return { rows: src.prev.rows, firstCol: src.prev.firstMonthCol, from: 'chain' };
@@ -260,8 +262,8 @@
     MP_LINKS.forEach(function (link) {
       var info = { found: false, label: link.label, sheet: MP_SHEET, refs: [], from: pos && pos.from };
       var r = pos ? parseInt(pos.rows[link.item], 10) : 0;
-      if (!ws) info.reason = '檔案裡沒有「' + MP_SHEET + '」工作表（第 8 步）';
-      else if (!pos || !r) info.reason = '不知道「' + link.label + '」在人力工作表的哪一列，請重做第 8 步';
+      if (!ws) info.reason = '檔案裡沒有「' + MP_SHEET + '」工作表（第 7 步）';
+      else if (!pos || !r) info.reason = '不知道「' + link.label + '」在人力工作表的哪一列，請重做第 7 步';
       else {
         info.found = true;
         info.row = r;
@@ -291,13 +293,13 @@
     els.srcInfo = h('p', { class: 'source-line', 'aria-live': 'polite' });
     els.drop = ui.fileDrop({
       id: 'f9-base',
-      title: '上傳第 8 步匯出的 Excel',
+      title: '上傳第 7 步匯出的 Excel',
       sub: '或把檔案拖進這裡。支援 .xlsx',
       onFile: openUpload
     });
     els.switchBtn = h('button', { type: 'button', class: 'btn-link', hidden: true, onclick: switchSource });
     els.backBtn = h('button', {
-      type: 'button', class: 'btn-link', hidden: true, text: '回到第 8 步匯入人力報表',
+      type: 'button', class: 'btn-link', hidden: true, text: '回到第 7 步匯入人力報表',
       onclick: function () { IEApp.go('manpower'); }
     });
     els.srcMsg = h('p', { class: 'msg is-error', role: 'alert', hidden: true });
@@ -320,7 +322,7 @@
 
     panel.appendChild(h('ol', { class: 'tasks' },
       h('li', { class: 'task' },
-        h('h2', { text: '第 8 步的 Excel' }),
+        h('h2', { text: '第 7 步的 Excel' }),
         els.srcInfo, els.drop.el,
         h('div', { class: 'link-row' }, els.switchBtn, els.backBtn),
         els.srcMsg),
@@ -454,7 +456,7 @@
       .then(function (res) {
         var names = res.workbook.worksheets.map(function (w) { return w.name; });
         if (!names.some(function (n) { return !isExtra(n); })) {
-          throw new Error('這個檔案沒有 MPS 工作表。請上傳第 8 步匯出的檔案。');
+          throw new Error('這個檔案沒有 MPS 工作表。請上傳第 7 步匯出的檔案。');
         }
         S.upload = { name: file.name, buffer: res.buffer, sheets: names };
         S.preferUpload = true;
@@ -486,7 +488,6 @@
       var refs = monthRefs(main, src);
       work.refs = refs;
       work.links = XIO.findReportLinks(main, { dataStartRow: dataStartRow(src), months: XIO.REPORT.months });
-      work.rma = XIO.readRmaQuantities(main, work.links.hoursRework);
       var mp = manpowerLinks(wb, src);
       Object.keys(mp).forEach(function (k) { work.links[k] = mp[k]; });
       work.wb = wb;
@@ -512,10 +513,10 @@
     els.preview.textContent = '';
 
     if (!src) {
-      els.srcInfo.textContent = '還沒有第 8 步的結果。回到第 8 步，或上傳之前匯出的檔案。';
+      els.srcInfo.textContent = '還沒有第 7 步的結果。回到第 7 步，或上傳之前匯出的檔案。';
       els.drop.setIdle();
     } else if (src.kind === 'prev') {
-      els.srcInfo.textContent = '沿用第 8 步剛做好的結果：' + prev.outName + '。不用先匯出；要改用之前匯出的檔案，再從下面上傳。';
+      els.srcInfo.textContent = '沿用第 7 步剛做好的結果：' + prev.outName + '。不用先匯出；要改用之前匯出的檔案，再從下面上傳。';
       if (S.upload) els.drop.setFile(S.upload.name, '已上傳，目前沒有使用。點這裡換一個檔案');
       else els.drop.setIdle();
     } else {
@@ -524,9 +525,9 @@
     }
     els.backBtn.hidden = !!src;
     els.switchBtn.hidden = !(S.upload && prev);
-    if (src) els.switchBtn.textContent = src.kind === 'file' ? '改用第 8 步剛做好的結果' : '改用上傳的檔案';
+    if (src) els.switchBtn.textContent = src.kind === 'file' ? '改用第 7 步剛做好的結果' : '改用上傳的檔案';
 
-    if (!src) { setSummary('先準備好第 8 步的 Excel。'); return; }
+    if (!src) { setSummary('先準備好第 7 步的 Excel。'); return; }
     ensureWork(src);
     if (S.work.loading) { setSummary('準備資料中…'); return; }
     if (S.work.error) { setSummary(S.work.error, true); return; }
@@ -538,7 +539,7 @@
     if (read.error) { setSummary(read.error, true); return; }
     // 每次都照目前的輸入重新產生總表（給預覽用）
     work.report = XIO.addReportSheet(work.wb, { title: read.values.title, monthRefs: work.refs || [], links: linkRefs(work.links),
-      rmaQty: work.rma.qty, inputs: read.values, yoLimit: read.values.yoLimit });
+      inputs: read.values, yoLimit: read.values.yoLimit });
     var ws = work.report.worksheet;
     var names = work.wb.worksheets.map(function (w) { return w.name; });
     var replacing = src.kind === 'file' && S.upload.sheets.some(function (n) { return sameName(n, SHEET_NAME); });
@@ -572,7 +573,6 @@
     var refs = work.refs || [];
     var links = linkRefs(work.links);
     var inputs = read.values;
-    var rmaQty = work.rma.qty;
     IEApp.state.withReport = {
       outName: outputName(src),
       mainSheet: work.main.name,
@@ -581,7 +581,7 @@
       monthCol: work.report.monthCol,
       monthCount: work.report.months,
       inputs: inputs,
-      build: function () { return buildWorkbook(src, refs, links, rmaQty, inputs); }
+      build: function () { return buildWorkbook(src, refs, links, inputs); }
     };
   }
 
@@ -617,7 +617,7 @@
       } else if (isMp) {
         src = info.sheet + ' 工作表「' + link.label + '」第 ' + info.row + ' 列，' +
           XIO.numToCol(info.refs[0].col) + ' 到 ' + XIO.numToCol(info.refs[info.refs.length - 1].col) + ' 行' +
-          (info.from === 'saved' ? '（第 8 步上次確認的位置）' : '');
+          (info.from === 'saved' ? '（第 7 步上次確認的位置）' : '');
         var blank = info.refs.filter(function (x) { return x.value === null; }).length;
         if (blank) {
           warn = true;
@@ -630,8 +630,10 @@
           ' 工作表裡找不到「' + link.label + '」這一列（第 ' + link.step + ' 步做的），這一列先留空白。'));
       } else {
         var first = info.refs[0], last = info.refs[info.refs.length - 1];
-        src = '「' + link.label + '」第 ' + info.row + ' 列' +
-          (first ? '，' + XIO.numToCol(first.col) + ' 到 ' + XIO.numToCol(last.col) + ' 行' : '');
+        var rowsText = (info.rows || [info.row]).join('、');
+        src = '「' + link.label + '」第 ' + rowsText + ' 列' +
+          (first ? '，' + XIO.numToCol(first.col) + ' 到 ' + XIO.numToCol(last.col) + ' 行' : '') +
+          (info.rows && info.rows.length > 1 ? '（' + info.rows.length + ' 張匯總表相加）' : '');
         if (info.refs.length < months) {
           warn = true;
           els.notes.appendChild(h('li', { class: 'is-warn' }, rowLabel[link.key] + '：「' + link.label + '」那一列只找到 ' +
@@ -653,35 +655,18 @@
       body.appendChild(tr);
     });
 
-    // MPS(PCS) RMA：第 7 步各項目數量的合計
-    (function () {
-      var q = work.rma;
-      var tr = h('tr', null,
-        h('th', { class: 'rowhead', scope: 'row', text: rowLabel.mpsRma }),
-        h('td', { text: q.items.length ? 'RMA 項目（' + q.items.join('、') + '）的數量合計' : '找不到 RMA 項目' }));
-      for (var m = 0; m < months; m++) {
-        var list = q.qty[m] || [];
-        tr.appendChild(h('td', { class: list.length ? 'is-num' : 'is-missing',
-          text: list.length ? list.reduce(function (a, b) { return a + b; }, 0).toLocaleString('en-US') : '' }));
-      }
-      body.insertBefore(tr, body.children[2] || null);
-      if (!q.items.length) {
-        warn = true;
-        els.notes.appendChild(h('li', { class: 'is-warn' }, 'MPS(PCS) RMA：MPS 工作表裡找不到 RMA 項目（第 7 步），這一列先留空白。'));
-      } else if (q.bad) {
-        warn = true;
-        els.notes.appendChild(h('li', { class: 'is-warn' }, 'RMA 區塊有 ' + q.bad + ' 格的公式不是「數量*CT.」的樣子，那幾格沒有算進 MPS(PCS) RMA。'));
-      }
-    })();
+    // MPS(PCS) RMA、需求工時-重工：原本的第 7 步 RMA 已經拿掉，之後改成在第 1 步挑選 RMA 的列
+    els.notes.appendChild(h('li', null, rowLabel.mpsRma + '、' + rowLabel.hoursRework +
+      '：RMA 之後改成在第 1 步挑選，這兩列先留空白。'));
 
     var ex = work.links.mpsMass.found && work.links.mpsMass.refs[0];
+    var exText = ex ? (ex.parts || [ex]).map(function (p) { return "'" + p.sheet + "'!" + XIO.numToCol(p.col) + p.row; }).join('+') : '';
     els.result.textContent = '';
     els.result.appendChild(h('p', { class: 'sheet-caption', text: '從其他工作表抓的列（需求工時只顯示整數）：' }));
     els.result.appendChild(h('div', { class: 'sheet-scroll', tabindex: '0', role: 'group', 'aria-label': '總表已填的列' },
       h('table', { class: 'sheet is-result is-check' }, h('thead', null, head), body)));
     if (ex) {
-      els.result.appendChild(h('p', { class: 'hint', text: '每格都是公式，例如總表 D' + XIO.REPORT_ROWS[0].row + ' ＝ =\'' +
-        ex.sheet + "'!" + XIO.numToCol(ex.col) + ex.row + '。' }));
+      els.result.appendChild(h('p', { class: 'hint', text: '每格都是公式，例如總表 D' + XIO.REPORT_ROWS[0].row + ' ＝ =' + exText + '。' }));
     }
     return warn;
   }
@@ -692,9 +677,9 @@
   }
 
   /* ---------- 產生活頁簿 ---------- */
-  function buildWorkbook(src, refs, links, rmaQty, inputs) {
+  function buildWorkbook(src, refs, links, inputs) {
     return buildFrom(src).then(function (wb) {
-      XIO.addReportSheet(wb, { title: inputs.title, monthRefs: refs, links: links, rmaQty: rmaQty, inputs: inputs, yoLimit: inputs.yoLimit });
+      XIO.addReportSheet(wb, { title: inputs.title, monthRefs: refs, links: links, inputs: inputs, yoLimit: inputs.yoLimit });
       return wb;
     });
   }
