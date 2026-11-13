@@ -1383,7 +1383,8 @@
 
     if (plan.isNew) main.getColumn(col).width = 11;
 
-    // 工作中心：P003 的 Work Center 直接貼值（不是公式）；找不到的料號留空白、淺紅色底
+    // 工作中心：公式參照 P003 同一列的 Work Center（例如 ='P003'!N5），點儲存格看得到是哪一格；整行置中。
+    // P003 那一格是空白時寫 =IF('P003'!N5="","",'P003'!N5)，Excel 才不會顯示 0。找不到的料號留空白、淺紅色底
     if (plan.wcCol) {
       var wc = plan.wcCol;
       var wcHeader = o.wcHeader || WC_HEADER;
@@ -1392,12 +1393,14 @@
         if (!findHeaderColumn(main, headerEnd, wcHeader)) {
           for (var wr = wtop; wr <= headerEnd; wr++) {
             var wsrc = main.findCell(wr, o.keyCol);
-            if (wsrc) main.getCell(wr, wc).style = wsrc.style;
+            if (wsrc) main.getCell(wr, wc).style = centered(wsrc.style);
           }
           if (headerEnd > wtop) main.mergeCellsWithoutStyle(wtop, wc, headerEnd, wc);
         }
         var wHead = main.getCell(wtop, wc);
-        (wHead.isMerged ? wHead.master : wHead).value = wcHeader;
+        wHead = wHead.isMerged ? wHead.master : wHead;
+        wHead.value = wcHeader;
+        wHead.style = centered(wHead.style);
       }
       var wdone = {};
       plan.rows.forEach(function (item) {
@@ -1405,11 +1408,16 @@
         var base = main.findCell(item.row, col);
         var style = Object.assign({}, base ? base.style : {});
         delete style.fill;
+        style = centered(style);
         wdone[item.row] = true;
         if (item.refRow) {
           style.numFmt = item.wcFmt || 'General';
           cell.style = style;
-          cell.value = item.wc === undefined ? null : item.wc;
+          var refAddr = sheetRef(ref.name) + numToCol(o.refWcCol) + item.refRow;
+          var empty = item.wc === undefined || item.wc === null || item.wc === '';
+          cell.value = empty
+            ? { formula: 'IF(' + refAddr + '="","",' + refAddr + ')', result: '' }
+            : { formula: refAddr, result: item.wc };
         } else {
           style.fill = MISSING_FILL;
           cell.style = style;
@@ -1422,6 +1430,7 @@
         if (old) old.value = null;
       });
       if (!main.getColumn(wc).width || main.getColumn(wc).width < 12) main.getColumn(wc).width = 12;
+      main.getColumn(wc).alignment = { horizontal: 'center', vertical: 'middle' };   // 整行置中（之後在空白格打字也置中）
     }
 
     // 請 Excel 開檔時重新計算一次公式
@@ -2865,7 +2874,7 @@
   }
 
   var ExcelIO = {
-    VERSION: 18,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
+    VERSION: 20,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
     colToNum: colToNum,
     numToCol: numToCol,
     normalizeText: normalizeText,

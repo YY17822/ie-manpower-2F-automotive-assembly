@@ -7,7 +7,7 @@
  *   填入的是公式（例如 ='P003'!M5/'P003'!K5），之後在 Excel 點儲存格就能看到數值是從 P003 哪兩格算出來的。
  *   同一個料號在 P003 出現很多列時，取最上面那一列（和 VLOOKUP 一樣）。
  *   找不到的料號留空白，並標上淺紅色底。
- *   CT. 右邊再加一行「工作中心」：P003 同一列的 Work Center 直接貼值（不是公式）。不想帶入可以選「不帶入工作中心」。
+ *   CT. 右邊再加一行「工作中心」：公式參照 P003 同一列的 Work Center（例如 ='P003'!N5），整行置中。不想帶入可以選「不帶入工作中心」。
  *
  *   來源有兩種：
  *     a. 剛才第 3 步做好的結果（不用先匯出，直接沿用）
@@ -168,7 +168,7 @@
           h('label', { for: 'f3-refval', text: 'Labor 在' }), els.refValueCol,
           h('label', { for: 'f3-refdiv', text: 'Base Qty 在' }), els.refDivCol,
           h('label', { for: 'f3-refwc', text: 'Work Center 在' }), els.refWcCol),
-        h('p', { class: 'hint', text: 'CT. = Labor ÷ Base Qty。P003 的 Labor 是做 Base Qty 個的工時，除過之後才是單件工時。Work Center 直接貼到 CT. 右邊的「工作中心」（貼值，不是公式）。' }),
+        h('p', { class: 'hint', text: 'CT. = Labor ÷ Base Qty。P003 的 Labor 是做 Base Qty 個的工時，除過之後才是單件工時。Work Center 帶到 CT. 右邊的「工作中心」（公式，例如 =\'P003\'!N5，整行置中）。' }),
         els.refPreview),
       h('li', { class: 'task' },
         h('h2', { text: '匯出' }),
@@ -394,7 +394,7 @@
       '。' + plan.rows.length.toLocaleString('en-US') + ' 個料號裡找到 ' +
       plan.found.toLocaleString('en-US') + ' 個' +
       (plan.missing ? '，找不到 ' + plan.missing.toLocaleString('en-US') + ' 個。' : '，全部都有找到。') +
-      (plan.wcCol ? ' 工作中心填在 ' + XIO.numToCol(plan.wcCol) + ' 行（CT. 右邊，P003 的 ' + XIO.numToCol(refWcCol) + ' 行直接貼值）。' : ' 沒有選 Work Center，不帶入工作中心。'),
+      (plan.wcCol ? ' 工作中心填在 ' + XIO.numToCol(plan.wcCol) + ' 行（CT. 右邊，公式參照 P003 的 ' + XIO.numToCol(refWcCol) + ' 行，整行置中）。' : ' 沒有選 Work Center，不帶入工作中心。'),
       false, plan.missing > 0);
 
     renderNotes(plan);

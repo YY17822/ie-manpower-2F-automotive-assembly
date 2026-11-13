@@ -378,7 +378,22 @@
   }
 
   /* ---------- 各報表的卡片（檔案有增減、換順序時整個重畫） ---------- */
+  // 各報表預設的工作表：報表 1「MPS」、報表 2「TAI MPS」、報表 3「3DP MPS」（名稱不分大小寫、不管空白）。
+  // 沒有這個名稱的工作表就用第一個；自己選過工作表的報表不再自動換
+  var DEFAULT_SHEETS = ['MPS', 'TAI MPS', '3DP MPS'];
+  function sheetKey(name) { return XIO.normalizeText(name || '').replace(/\s+/g, '').toLowerCase(); }
+  function applyDefaultSheets() {
+    S.reports.forEach(function (R, i) {
+      if (R.sheetPicked) return;
+      var want = DEFAULT_SHEETS[i];
+      var hit = want ? R.workbook.worksheets.filter(function (w) { return sheetKey(w.name) === sheetKey(want); })[0] : null;
+      var target = hit || R.workbook.worksheets[0];
+      if (R.ws !== target) { R.ws = target; R.infoKey = ''; R.previewSig = ''; }
+    });
+  }
+
   function renderReports() {
+    applyDefaultSheets();
     if (S.reports.length) {
       els.drop.setFile('已上傳 ' + S.reports.length + ' 份報表', '點這裡再加入報表');
     } else {
@@ -428,6 +443,7 @@
     E.sheet.value = String(R.workbook.worksheets.indexOf(R.ws));
     E.sheet.addEventListener('change', function () {
       R.ws = R.workbook.worksheets[parseInt(E.sheet.value, 10)];
+      R.sheetPicked = true;              // 自己選過，不再自動換成預設的工作表
       R.infoKey = '';
       els.exportNote.textContent = '';
       recompute();
