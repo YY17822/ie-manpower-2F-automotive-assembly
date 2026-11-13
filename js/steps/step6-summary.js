@@ -3,6 +3,7 @@
  *   在需求工時那幾行的下面加三列，每格都是公式。和第 2 步一樣每一組一張、放在同一列：
  *     取像＋車用   車用（沒有車用就是取像）最後一列資料之後空一列，兩段一起算（公式寫兩段範圍）
  *     光機系統     光機系統最後一列資料之後空一列
+ *     RMA          【RMA】最後一列之後空一列，只有「RMA總需求工時」一列（沒有挑出 RMA 時填 0）
  *   （舊版沒有類別標題的檔案：整塊資料一張，最後一列資料之後空一列。）
  *   以 Status 在 C 行、需求工時在 N 行、資料在第 5 到 74 列為例：
  *
@@ -36,7 +37,7 @@
   var TITLE = '需求工時';
   var SUFFIX = '_工時匯總';
   var GROUPS = XIO.STATUS_GROUPS;     // M = 量產、R = 試產（和第 2 步共用）
-  var LABELS = { total: 'Production 總需求工時', groups: GROUPS.map(function (g) { return g.label + '總需求工時'; }) };
+  var LABELS = { total: 'Production 總需求工時', groups: GROUPS.map(function (g) { return g.label + '總需求工時'; }), rma: 'RMA總需求工時' };
   var STATUS_GUESS = /status|狀態/i;
 
   var S = {
@@ -362,8 +363,8 @@
       h('th', { class: 'colhead', scope: 'col', text: '項目' }));
     plan.months.forEach(function (m) { head.appendChild(monthHead(m)); });
 
-    var items = [{ label: LABELS.total, row: plan.totalRow, value: function (m) { return m.total; } }];
-    GROUPS.forEach(function (gr, k) {
+    var items = [{ label: plan.isRma ? LABELS.rma : LABELS.total, row: plan.totalRow, value: function (m) { return m.total; } }];
+    plan.groups.forEach(function (gr, k) {          // RMA 那張只有 RMA總需求工時一列
       items.push({ label: LABELS.groups[k] + '（' + gr.key + '，' + plan.counts[k] + ' 列）', row: plan.groupRows[k],
         value: function (m) { return m.groups[k]; } });
     });
@@ -389,7 +390,7 @@
     if (!m0) return;
     var L = XIO.numToCol(m0.col);
     var f = XIO.summaryFormulas(plan, opts, m0);
-    var names = [LABELS.total].concat(LABELS.groups);
+    var names = plan.isRma ? [LABELS.rma] : [LABELS.total].concat(LABELS.groups);
     els.result.appendChild(h('p', { class: 'hint', text: L + ' 行填入的公式（其他月份一樣）：' +
       plan.rows.map(function (r, j) { return names[j] + ' ' + L + r + ' =' + f[j]; }).join('　') }));
   }

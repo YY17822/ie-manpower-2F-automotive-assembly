@@ -9,7 +9,12 @@
  *      兩種方式各報表可以混用
  *      ——各報表保留的行位置可以不同，但保留的行數和順序（相對位置）要一樣
  *   3. 指定 Status 在哪一行（區分量產、試產，後面總表會用到）
- *   4. 每份報表指定類別：取像、車用、光機系統（一定要選，不會自動猜）
+ *   3-1. 挑出 RMA：從各報表留下來的所有列裡，用一組條件挑出 RMA（新檔的某一行，模糊比對含有某些字，或等於某些值）。
+ *        模糊比對時列出符合的列，可以取消勾選（只在這次有效，不會記住）。
+ *        挑出來的列從原本的段移走，放到最下面的【RMA】：最後一張匯總表下面空 3 列，標題底色 #FFCAD4，
+ *        底下是 RMA 的 MPS，再空 1 列給第 2 步的 RMA Total（只有 Total 一列）。沒有挑出 RMA 也一樣放【RMA】段。
+ *   4. 每份報表的類別：取像、車用、光機系統。依檔名預設（TYO = 光機系統、TAI = 車用、Image = 取像），沒有就自己選；
+ *      報表依類別排順序（取像 → 車用 → 光機系統），報表 1、2、3… 照這個順序編號
  *   5. 匯出一份新的 Excel：表頭用報表 1 的（含合併儲存格），底下依類別分段（XIO.filterSections）：
  *        【取像】 取像的 MPS → 空 3 列 → 【車用】 車用的 MPS → 空 1 列、3 列給第 2 步的匯總表（取像＋車用）
  *        → 空 6 列 → 【光機系統】 光機系統的 MPS → 空 1 列給第 2 步的匯總表（光機系統）
@@ -31,7 +36,7 @@
   var h = IEApp.h;
 
   var STORE_KEY = 'step1';                    // 共用設定的組名（存進 Supabase 的 key 是 step1.xxx）
-  var PREVIEW_ROWS = 8;     // 預覽顯示幾列資料
+  var PREVIEW_ROWS = 3000;  // 各報表的預覽最多畫幾列資料（表格可以上下、左右捲動）
   var OUT_PREVIEW_ROWS = 60; // 匯出後的樣子顯示幾列（要看得到各段）
   var MAX_CHIPS = 24;
   var MAX_FZ_LIST = 300;    // 模糊比對的預覽最多列出幾列
@@ -40,11 +45,14 @@
   // reports：每份報表各自的條件，依上傳順序（報表 1、報表 2…），下個月照同樣順序上傳就會自動帶入
   //   cat：類別（'image' 取像、'auto' 車用、'optics' 光機系統，見 XIO.MPS_SECTIONS）
   // statusPos：Status 是「第幾個保留的行」（1 起算），也就是新檔的第幾行
-  var DEFAULTS = { startRow: 5, selCol: 'A', reports: [], statusPos: '' };
+  // rma：挑出 RMA 的條件（一組，所有報表共用）
+  //   mode 'fz' 模糊比對（zValues：各輸入框的值）／'eq' 等於（values：逗號分開）；col：新檔的第幾行（1 起算）
+  var RMA_DEFAULT = { mode: 'fz', col: '', values: '', zValues: ['', '', ''] };
+  var DEFAULTS = { startRow: 5, selCol: 'A', reports: [], statusPos: '', rma: RMA_DEFAULT };
 
   // 這一步的狀態（切到別的步驟再回來時還在）
   // S.reports[i] = { fileName, workbook, ws, info, infoKey, els }
-  var S = { reports: [], result: null };
+  var S = { reports: [], result: null, rmaOff: {} };   // rmaOff：模糊比對時取消勾選的列 { '報表 id:列號': true }
   var settings = loadSettings();
   var els = {};
   var timer = null;
@@ -59,11 +67,18 @@
     if (!Array.isArray(out.reports)) out.reports = [];
     // 只有一份報表的舊版設定（values、cols）當作報表 1
     if (!out.reports.length && (s.values || s.cols)) out.reports.push({ values: s.values || '', cols: s.cols || '' });
+    var r = out.rma && typeof out.rma === 'object' ? out.rma : {};
+    out.rma = {
+      mode: r.mode === 'eq' ? 'eq' : 'fz',
+      col: r.col === undefined || r.col === null ? '' : String(r.col),
+      values: r.values ? String(r.values) : '',
+      zValues: Array.isArray(r.zValues) && r.zValues.length ? r.zValues.map(function (v) { return String(v == null ? '' : v); }) : ['', '', '']
+    };
     return out;
   }
   function saveSettings() {
     // Status 在新檔的哪一行（英文字母）存在 step1-2-6，和第 2、6 步共用（ui.statusCol）
-    var keep = { startRow: settings.startRow, selCol: settings.selCol, reports: settings.reports, statusPos: settings.statusPos };
+    var keep = { startRow: settings.startRow, selCol: settings.selCol, reports: settings.reports, statusPos: settings.statusPos, rma: settings.rma };
     try { IEApp.settings.write(STORE_KEY, keep); } catch (e) { /* 存不了就算了 */ }
   }
   function catOf(i) {
@@ -153,6 +168,7 @@
     });
 
     els.cards = h('div', { class: 'report-cards' });
+    buildRmaPanel();
     els.status = h('select', { id: 'f-status', class: 'in-select' });
     els.statusChecks = h('ul', { class: 'notes' });
 
@@ -174,7 +190,7 @@
       h('li', { class: 'task' },
         h('h2', { text: '上傳 MPS 報表' }),
         els.drop.el, els.fileList, els.fileMsg,
-        h('p', { class: 'hint', text: '依上傳順序叫報表 1、報表 2…。每份報表都要選類別（取像、車用、光機系統）；新檔裡依 取像 → 車用 → 光機系統 分段，同一類有好幾份時照上傳順序往下接。每份報表的類別和條件會記住，下個月照同樣順序上傳就會自動帶入。' }),
+        h('p', { class: 'hint', text: '類別依檔名預設：有 TYO 是光機系統、有 TAI 是車用、有 Image 是取像；都沒有的話自己選。報表依類別排順序（取像 → 車用 → 光機系統），依序叫報表 1、報表 2…；同一類有好幾份時照上傳順序。每份報表的條件會記住，下個月同樣的報表會排在同一個位置，自動帶入。' }),
         h('details', { class: 'advanced' },
           h('summary', { text: '報表版面不一樣時' }),
           h('div', { class: 'field-row' },
@@ -187,6 +203,10 @@
         h('p', { class: 'hint', text: '篩選方式每份報表各自選，可以混用：「A 行等於」是原本的方式；「指定行」可以選任何一行，留下等於或不等於某些值的列，那一行空白的列一律不要。' }),
         h('p', { class: 'hint', text: '每份報表保留的行位置可以不同，但行數和順序要一樣：報表 1 保留的第 1 個行，和報表 2 保留的第 1 個行，會放在新檔的同一行。' }),
         els.cards),
+      h('li', { class: 'task' },
+        h('h2', { text: '挑出 RMA' }),
+        h('p', { class: 'hint', text: '從上面各報表留下來的所有列裡，挑出哪些是 RMA。挑出來的列會從【取像】【車用】【光機系統】移走，改放在最下面的【RMA】（最後一張匯總表下面空 3 列）。沒有挑出 RMA 時，【RMA】和它的 Total 一樣會放，只是沒有項目。' }),
+        els.rma.box),
       h('li', { class: 'task' },
         h('h2', { text: 'Status 在哪一行' }),
         h('div', { class: 'field-row' },
@@ -223,16 +243,38 @@
     timer = setTimeout(recompute, 200);
   }
 
+  /* ---------- 類別：依檔名預設，報表依類別排順序 ---------- */
+  // 檔名有 TYO 是光機系統、有 TAI 是車用、有 Image 是取像（TYO、TAI 要大寫；Image 不分大小寫）。都沒有就不預設，自己選。
+  function guessCat(name) {
+    var base = String(name || '').replace(/\.[^.]+$/, '');
+    if (/TYO/.test(base)) return 'optics';
+    if (/TAI/.test(base)) return 'auto';
+    if (/image/i.test(base)) return 'image';
+    return '';
+  }
+  function catRank(key) {
+    for (var k = 0; k < XIO.MPS_SECTIONS.length; k++) if (XIO.MPS_SECTIONS[k].key === key) return k;
+    return XIO.MPS_SECTIONS.length;                // 還沒選類別的排最後
+  }
+  // 報表依類別排：取像 → 車用 → 光機系統 → 還沒選的；同一類照原本的順序。條件跟著報表一起移
+  function sortReports() {
+    S.reports.forEach(function (R, i) { slot(i); });
+    var order = S.reports.map(function (R, i) { return { R: R, s: settings.reports[i], rank: catRank(catOf(i)), i: i }; });
+    order.sort(function (a, b) { return a.rank - b.rank || a.i - b.i; });
+    order.forEach(function (x, i) { S.reports[i] = x.R; settings.reports[i] = x.s; });
+  }
+
   /* ---------- 開檔 ---------- */
   function addFiles(files) {
     els.fileMsg.hidden = true;
     els.drop.setBusy(files.map(function (f) { return f.name; }).join('、'));
     var errors = [];
-    // 依選檔順序一份一份讀，報表編號才會跟著選的順序
+    var added = [];
+    // 一份一份讀；讀完再依檔名預設類別，並依類別排順序（取像 → 車用 → 光機系統）
     files.reduce(function (p, file) {
       return p.then(function () {
         return ui.readWorkbook(file).then(function (res) {
-          S.reports.push({ id: ++seq, fileName: file.name, workbook: res.workbook, ws: res.workbook.worksheets[0], info: null, infoKey: '' });
+          added.push({ id: ++seq, fileName: file.name, workbook: res.workbook, ws: res.workbook.worksheets[0], info: null, infoKey: '', guess: guessCat(file.name) });
         }).catch(function (err) {
           errors.push(file.name + '：' + (err && err.message ? err.message : String(err)));
         });
@@ -242,6 +284,13 @@
         els.fileMsg.textContent = '有檔案讀不到。' + errors.join('；');
         els.fileMsg.hidden = false;
       }
+      // 新的檔案先依預設的類別排好再接上去，才會對到上個月同一個位置記住的條件
+      added.sort(function (a, b) { return catRank(a.guess) - catRank(b.guess); });
+      added.forEach(function (R) {
+        S.reports.push(R);
+        if (R.guess) slot(S.reports.length - 1).cat = R.guess;
+      });
+      sortReports();
       els.exportNote.textContent = '';
       renderReports();
     });
@@ -279,6 +328,7 @@
       if (!cat.value) cat.classList.add('is-empty');
       cat.addEventListener('change', function () {
         slot(i).cat = cat.value;
+        sortReports();                     // 改了類別就重新排順序（取像 → 車用 → 光機系統）
         els.exportNote.textContent = '';
         renderReports();
       });
@@ -302,6 +352,7 @@
   function buildCard(R, i) {
     var st = slot(i);
     var E = R.els = {};
+    R.previewSig = '';                 // 卡片重做了，預覽要重畫
     var pre = 'f-r' + R.id + '-';
 
     E.sheet = h('select', { id: pre + 'sheet', 'aria-label': '工作表' });
@@ -469,6 +520,7 @@
     var ready = S.reports.map(function (R, i) { return checkReport(R, i, sr, sc); });
 
     renderStatus(ready);
+    clearRma();
 
     if (!S.reports.length) { setSummary('先上傳 MPS 報表。'); return; }
     var badIdx = [];
@@ -487,6 +539,20 @@
       return;
     }
 
+    // 挑出 RMA：各報表留下來的列都知道了，先算出哪些列符合 RMA 的條件
+    var parts = S.reports.map(function (R, i) {
+      return {
+        id: R.id, ws: R.ws, cat: catOf(i), values: ready[i].values, op: ready[i].op, selectorCol: ready[i].col,
+        fuzzy: ready[i].fuzzy, exclude: ready[i].exclude,
+        keepCols: ready[i].cols, lastRow: R.info.lastRow
+      };
+    });
+    var common = { dataStartRow: sr, selectorCol: sc };
+    var rma = rmaConf(n0);
+    // 還沒選類別的報表先當作排在最後，清單才列得出來
+    var scanParts = parts.map(function (p) { return p.cat ? p : Object.assign({}, p, { cat: 'optics' }); });
+    renderRma(ready, XIO.rmaScan(scanParts, common, rma), rma);
+
     var sp = statusPos();
     if (!sp || sp > n0) { setSummary('選擇 Status 在哪一行。'); return; }
     ui.statusCol.set(XIO.numToCol(sp));       // 第 2 步、第 6 步共用
@@ -498,38 +564,28 @@
       return;
     }
 
-    var parts = S.reports.map(function (R, i) {
-      return {
-        ws: R.ws, cat: catOf(i), values: ready[i].values, op: ready[i].op, selectorCol: ready[i].col,
-        fuzzy: ready[i].fuzzy, exclude: ready[i].exclude,
-        keepCols: ready[i].cols, lastRow: R.info.lastRow
-      };
-    });
-    var common = { dataStartRow: sr, selectorCol: sc };
-    var result = XIO.filterSections(parts, common);
+    var result = XIO.filterSections(parts, common, rma);
     S.result = result;
 
     var text = '合併後共 ' + result.matchedRows.toLocaleString('en-US') + ' 列資料、' + n0 + ' 行；Status 在 ' +
       XIO.numToCol(sp) + ' 行。';
     setSummary(text);
     result.sections.forEach(function (s) {
+      var isRma = s.key === XIO.RMA_SECTION.key;
       var who = [];
-      result.parts.forEach(function (p, i) { if (p.cat === s.key) who.push('報表 ' + (i + 1)); });
+      result.parts.forEach(function (p, i) { if (p.cat === s.key && p.matched) who.push('報表 ' + (i + 1)); });
       els.parts.appendChild(h('li', {
-        text: '【' + s.label + '】標題在第 ' + s.titleRow + ' 列，' + who.join('、') + ' 共 ' + s.matched.toLocaleString('en-US') + ' 列' +
-          (s.matched ? '，在第 ' + s.firstRow + '–' + s.lastRow + ' 列' : '')
+        text: '【' + s.label + '】標題在第 ' + s.titleRow + ' 列，' + (isRma ? '' : who.join('、') + ' ') + '共 ' + s.matched.toLocaleString('en-US') + ' 列' +
+          (s.matched ? '，在第 ' + s.firstRow + '–' + s.lastRow + ' 列' : '（沒有項目）')
       }));
     });
-    var lastSec = result.sections[result.sections.length - 1];
-    var groupsShown = {};
     result.sections.forEach(function (s, k) {
       var nextSec = result.sections[k + 1];
       if (nextSec && nextSec.group === s.group) return;
-      if (groupsShown[s.group]) return;
-      groupsShown[s.group] = true;
+      var isRma = s.key === XIO.RMA_SECTION.key;
       els.parts.appendChild(h('li', { class: 'hint-item',
-        text: XIO.MPS_SECTION_GROUPS[s.group].label + '的匯總表（第 2 步做）會放在第 ' + (s.lastRow + 2) + '–' + (s.lastRow + 4) + ' 列' +
-          (s === lastSec ? '。' : '，下面空 6 列才是下一段。') }));
+        text: XIO.MPS_SECTION_GROUPS[s.group].label + '的匯總表（第 2 步做）會放在第 ' + (s.lastRow + 2) + (isRma ? '' : '–' + (s.lastRow + 4)) + ' 列' +
+          (isRma ? '（只有 Total 一列）。' : nextSec && nextSec.key === XIO.RMA_SECTION.key ? '，下面空 3 列是【RMA】。' : '，下面空 6 列才是下一段。') }));
     });
 
     var mark = {}; mark[sp] = true;
@@ -553,7 +609,7 @@
       headerEnd: result.headerEnd,
       statusCol: sp,
       sections: result.sections,
-      build: function () { return XIO.filterSections(parts, common).workbook; }
+      build: function () { return XIO.filterSections(parts, common, rma).workbook; }
     };
   }
 
@@ -584,6 +640,12 @@
     E.selLabel.textContent = XIO.numToCol(sc);
     E.modeALabel.textContent = XIO.numToCol(sc);
     if (fc) renderChips(R, i, info, wanted); else E.chips.textContent = '';
+    // 預覽很大（整份報表），條件沒變就不重畫，打字時才不會卡
+    var sig = JSON.stringify([key, info.lastRow, info.colCount, parsed.cols, fc, mode, op, exc, Object.keys(wanted), terms]);
+    if (R.previewSig !== sig) {
+    R.previewSig = sig;
+    var scroller0 = E.preview.querySelector('.sheet-scroll');
+    var pos0 = scroller0 ? { left: scroller0.scrollLeft, top: scroller0.scrollTop } : null;
     ui.renderSheet(E.preview, R.ws, {
       headerEnd: sr - 1,
       lastRow: info.lastRow,
@@ -597,9 +659,12 @@
       wantedOp: op,
       fuzzyTerms: fc && terms && terms.length ? terms : null,
       exclude: exc,
-      caption: '報表 ' + (i + 1) + ' 原始內容（前 ' + PREVIEW_ROWS + ' 列資料）。共 ' + info.dataRows.toLocaleString('en-US') +
+      caption: '報表 ' + (i + 1) + ' 原始內容（可以上下、左右捲動）。共 ' + info.dataRows.toLocaleString('en-US') +
         ' 列資料、' + info.colCount + ' 行（到 ' + XIO.numToCol(info.colCount || 1) + ' 行）。'
     });
+    var scroller1 = E.preview.querySelector('.sheet-scroll');
+    if (scroller1 && pos0) { scroller1.scrollLeft = pos0.left; scroller1.scrollTop = pos0.top; }
+    }
 
     function msg(text, isError, isWarn) {
       E.msg.textContent = text;
@@ -902,6 +967,211 @@
       pos = best + len;
     }
     return box;
+  }
+
+  /* ---------- 挑出 RMA ---------- */
+  function buildRmaPanel() {
+    var E = els.rma = {};
+    var st = settings.rma;
+    E.modeFz = h('input', { id: 'f-rma-mode-fz', type: 'radio', name: 'f-rma-mode', value: 'fz' });
+    E.modeEq = h('input', { id: 'f-rma-mode-eq', type: 'radio', name: 'f-rma-mode', value: 'eq' });
+    E.modeFz.checked = st.mode !== 'eq';
+    E.modeEq.checked = st.mode === 'eq';
+    E.col = h('select', { id: 'f-rma-col', class: 'in-select' });
+    E.zBox = h('div', { class: 'fz-values' });
+    E.zAdd = h('button', { type: 'button', class: 'link-btn fz-add', text: '＋ 再加一個輸入框', onclick: addRmaInput });
+    E.eqValues = h('input', { id: 'f-rma-values', type: 'text', class: 'in in-short', autocomplete: 'off', placeholder: '例如 RMA', value: st.values });
+    E.boxFz = h('div', { class: 'filter-box', hidden: st.mode === 'eq' },
+      h('p', { class: 'hint', text: '那一格的字含有任一個輸入框的內容就是 RMA（英文大小寫、全形半形不分）。下面會列出符合的列，不是 RMA 的取消勾選。' }),
+      E.zBox, E.zAdd);
+    E.boxEq = h('div', { class: 'filter-box', hidden: st.mode !== 'eq' },
+      h('div', { class: 'field-row' }, h('label', { for: 'f-rma-values', text: '等於' }), E.eqValues),
+      h('p', { class: 'hint', text: '那一格等於任一個值就是 RMA。多個值用逗號分開，也可以點下面出現過的值。' }));
+    E.chips = h('div', { class: 'chips' });
+    E.msg = h('p', { class: 'summary', 'aria-live': 'polite' });
+    E.list = h('div', { class: 'fz-preview' });
+    E.box = h('div', null,
+      h('div', { class: 'field-row radio-row', role: 'radiogroup', 'aria-label': 'RMA 的篩選方式' },
+        h('span', { class: 'field-name', text: '篩選方式' }),
+        h('label', { for: 'f-rma-mode-fz' }, E.modeFz, '指定某一行，模糊比對（含有某些字）'),
+        h('label', { for: 'f-rma-mode-eq' }, E.modeEq, '指定某一行，等於某些值')),
+      h('div', { class: 'field-row' }, h('label', { for: 'f-rma-col', text: '比對的行' }), E.col),
+      E.boxFz, E.boxEq, E.chips, E.msg, E.list);
+    buildRmaInputs();
+
+    function setMode(m) {
+      settings.rma.mode = m;
+      E.boxFz.hidden = m !== 'fz';
+      E.boxEq.hidden = m !== 'eq';
+      els.exportNote.textContent = '';
+      recompute();
+    }
+    E.modeFz.addEventListener('change', function () { if (E.modeFz.checked) setMode('fz'); });
+    E.modeEq.addEventListener('change', function () { if (E.modeEq.checked) setMode('eq'); });
+    E.col.addEventListener('change', function () { settings.rma.col = E.col.value; els.exportNote.textContent = ''; recompute(); });
+    E.eqValues.addEventListener('input', function () { settings.rma.values = E.eqValues.value; schedule(); });
+  }
+
+  function buildRmaInputs(focusIndex) {
+    var E = els.rma;
+    E.zBox.textContent = '';
+    var list = settings.rma.zValues;
+    list.forEach(function (val, k) {
+      var id = 'f-rma-z-' + k;
+      var input = h('input', { id: id, type: 'text', class: 'in in-short', autocomplete: 'off', spellcheck: 'false',
+        placeholder: k === 0 ? '例如 RMA' : '', value: val });
+      input.addEventListener('input', function () { settings.rma.zValues[k] = input.value; schedule(); });
+      var row = h('div', { class: 'fz-value' }, h('label', { class: 'fz-label', for: id, text: '值 ' + (k + 1) }), input);
+      if (list.length > 1) {
+        row.appendChild(h('button', { type: 'button', class: 'link-btn', text: '刪除', 'aria-label': '刪除值 ' + (k + 1),
+          onclick: function () { removeRmaInput(k); } }));
+      }
+      E.zBox.appendChild(row);
+    });
+    if (focusIndex !== undefined) {
+      var el = document.getElementById('f-rma-z-' + focusIndex);
+      if (el) el.focus();
+    }
+  }
+  function addRmaInput() {
+    settings.rma.zValues.push('');
+    buildRmaInputs(settings.rma.zValues.length - 1);
+    els.exportNote.textContent = '';
+    recompute();
+  }
+  function removeRmaInput(k) {
+    settings.rma.zValues.splice(k, 1);
+    if (!settings.rma.zValues.length) settings.rma.zValues.push('');
+    buildRmaInputs(Math.min(k, settings.rma.zValues.length - 1));
+    els.exportNote.textContent = '';
+    recompute();
+  }
+
+  function rmaValues() {
+    var r = settings.rma;
+    if (r.mode === 'eq') {
+      return XIO.normalizeText(r.values).split(/[,、;]+/).map(function (v) { return v.trim(); }).filter(function (v) { return v !== ''; });
+    }
+    return r.zValues.map(function (v) { return XIO.normalizeText(v); }).filter(function (v) { return v !== ''; });
+  }
+  // 給 XIO.rmaScan / filterSections 的條件；n0 = 新檔有幾行
+  function rmaConf(n0) {
+    var col = parseInt(settings.rma.col, 10);
+    if (!(col >= 1 && col <= n0)) col = 0;
+    var skip = {};
+    if (settings.rma.mode !== 'eq') Object.keys(S.rmaOff).forEach(function (k) { if (S.rmaOff[k]) skip[k] = true; });
+    return { col: col, fuzzy: settings.rma.mode !== 'eq', values: rmaValues(), skip: skip };
+  }
+
+  // 上面的設定還沒好時：選單、清單都清掉
+  function clearRma(text) {
+    var E = els.rma;
+    E.col.textContent = '';
+    E.col.appendChild(h('option', { value: '', text: '先把上面各報表的設定做好' }));
+    E.col.disabled = true;
+    E.chips.textContent = '';
+    E.list.textContent = '';
+    E.msg.textContent = text || '';
+    E.msg.className = 'summary';
+  }
+
+  // 比對的行的選單、出現過的值、符合的列
+  function renderRma(ready, scan, conf) {
+    var E = els.rma;
+    var cols = ready[0].cols;
+    var labels = labelsOf(S.reports[0], cols);
+    E.col.disabled = false;
+    E.col.textContent = '';
+    E.col.appendChild(h('option', { value: '', text: '請選擇（不選就不挑 RMA）' }));
+    cols.forEach(function (c, k) {
+      var label = labels[k] ? '：' + shorten(labels[k]) : '';
+      E.col.appendChild(h('option', { value: String(k + 1), text: '新檔 ' + XIO.numToCol(k + 1) + ' 行（報表 1 的 ' + XIO.numToCol(c) + ' 行' + label + '）' }));
+    });
+    E.col.value = conf.col ? String(conf.col) : '';
+
+    E.chips.textContent = '';
+    E.list.textContent = '';
+    var colName = conf.col ? XIO.numToCol(conf.col) : '';
+    if (!conf.col) {
+      E.msg.textContent = '還沒選比對的行，這個月不挑 RMA（【RMA】段一樣會放，沒有項目）。';
+      E.msg.className = 'summary';
+      return;
+    }
+    // 出現過的值（點一下填入）
+    var wantKeys = {};
+    rmaValues().forEach(function (v) { wantKeys[XIO.matchKey(v)] = true; });
+    if (scan.values.length) {
+      E.chips.appendChild(h('span', { class: 'chips-label', text: '留下來的列裡，新檔 ' + colName + ' 行的值' }));
+      scan.values.slice(0, MAX_CHIPS).forEach(function (v) {
+        E.chips.appendChild(h('button', {
+          type: 'button', class: 'chip', 'aria-pressed': wantKeys[v.key] ? 'true' : 'false',
+          onclick: function () { toggleRmaValue(v); }
+        }, h('span', { class: 'chip-value', text: v.label }), h('span', { class: 'chip-count', text: v.count.toLocaleString('en-US') + ' 列' })));
+      });
+      if (scan.values.length > MAX_CHIPS) E.chips.appendChild(h('span', { class: 'chips-more', text: '另有 ' + (scan.values.length - MAX_CHIPS) + ' 種' }));
+    }
+    if (scan.blank) E.chips.appendChild(h('span', { class: 'chips-more', text: '空白 ' + scan.blank.toLocaleString('en-US') + ' 列' }));
+
+    if (!conf.values.length) {
+      E.msg.textContent = '還沒輸入要比對的值，這個月不挑 RMA（【RMA】段一樣會放，沒有項目）。';
+      E.msg.className = 'summary';
+      return;
+    }
+    var off = scan.hits.filter(function (x) { return x.skipped; }).length;
+    var picked = scan.hits.length - off;
+    E.msg.textContent = 'RMA：挑出 ' + picked.toLocaleString('en-US') + ' 列' +
+      (off ? '（符合 ' + scan.hits.length.toLocaleString('en-US') + ' 列，取消勾選 ' + off + ' 列）' : '') + '。';
+    E.msg.className = 'summary';
+    if (!scan.hits.length) { E.list.appendChild(h('p', { class: 'blank-none', text: '沒有符合的列。' })); return; }
+
+    var terms = conf.fuzzy ? XIO.fuzzyTerms(conf.values) : [];
+    var ul = h('ul', { class: 'blank-items fz-items rma-items' });
+    scan.hits.slice(0, MAX_FZ_LIST).forEach(function (it) {
+      var where = h('span', { class: 'blank-row', text: '報表 ' + (it.part + 1) + ' 第 ' + it.row + ' 列' });
+      var val = conf.fuzzy ? markText(it.value, terms) : h('span', { class: 'fz-val', text: it.value });
+      var ctx = h('span', { class: 'blank-text fz-ctx', text: it.text });
+      if (!conf.fuzzy) { ul.appendChild(h('li', { class: 'fz-item' }, where, val, ctx)); return; }
+      var key = it.id + ':' + it.row;
+      var cb = h('input', { type: 'checkbox', 'aria-label': '報表 ' + (it.part + 1) + ' 第 ' + it.row + ' 列是 RMA' });
+      cb.checked = !it.skipped;
+      cb.addEventListener('change', function () {
+        if (cb.checked) delete S.rmaOff[key]; else S.rmaOff[key] = true;
+        var top = ul.scrollTop;
+        els.exportNote.textContent = '';
+        recompute();
+        var again = els.rma.list.querySelector('.rma-items');
+        if (again) again.scrollTop = top;
+      });
+      ul.appendChild(h('li', { class: it.skipped ? 'is-off' : null }, h('label', { class: 'fz-item' }, cb, where, val, ctx)));
+    });
+    if (scan.hits.length > MAX_FZ_LIST) {
+      ul.appendChild(h('li', { class: 'blank-more', text: '另有 ' + (scan.hits.length - MAX_FZ_LIST).toLocaleString('en-US') + ' 列沒有列出（一樣算 RMA）' }));
+    }
+    E.list.appendChild(ul);
+  }
+
+  function toggleRmaValue(v) {
+    var r = settings.rma;
+    if (r.mode === 'eq') {
+      var list = rmaValues();
+      var kept = list.filter(function (x) { return XIO.matchKey(x) !== v.key; });
+      if (kept.length === list.length) kept.push(v.label);
+      r.values = kept.join(', ');
+      els.rma.eqValues.value = r.values;
+    } else {
+      var zs = r.zValues;
+      var at = -1, empty = -1;
+      zs.forEach(function (x, k) {
+        if (at < 0 && XIO.normalizeText(x) !== '' && XIO.matchKey(x) === v.key) at = k;
+        if (empty < 0 && XIO.normalizeText(x) === '') empty = k;
+      });
+      if (at >= 0) zs[at] = '';
+      else if (empty >= 0) zs[empty] = v.label;
+      else zs.push(v.label);
+      buildRmaInputs();
+    }
+    els.exportNote.textContent = '';
+    recompute();
   }
 
   /* ---------- 匯出 ---------- */

@@ -4,6 +4,7 @@
  *   第 1 步依類別分段（取像、車用、光機系統），匯總表有兩張：
  *     取像＋車用   放在車用（沒有車用就是取像）最後一列資料之後空一列，兩段一起算
  *     光機系統     放在光機系統最後一列資料之後空一列
+ *     RMA          放在【RMA】最後一列之後空一列，只有 Total 一列（沒有挑出 RMA 時填 0）
  *   （舊版沒有類別標題的檔案：整塊資料一張，放在最後一列資料之後空一列。）
  *   每張三列，對齊各月的行；文字標籤在第一個月左邊那一行，再左邊一行跨三列註明是哪一組。每格都是公式。
  *   取像＋車用的公式寫兩段範圍（中間的標題列、空列不算），例如 =SUM(E6:E40,E45:E80)。
@@ -478,7 +479,7 @@
     plan.months.forEach(function (m, i) { head.appendChild(monthHead(m, labels, i)); });
 
     var items = [{ label: LABELS.total, row: plan.totalRow, value: function (m) { return m.total; }, cls: ' is-total' }];
-    GROUPS.forEach(function (gr, k) {
+    plan.groups.forEach(function (gr, k) {          // RMA 那張沒有量產、試產
       items.push({ label: gr.label + '（' + gr.key + '，' + plan.counts[k] + ' 列）', row: plan.groupRows[k],
         value: function (m) { return m.groups[k]; }, cls: '' });
     });
@@ -500,7 +501,7 @@
     els.result.appendChild(h('div', { class: 'sheet-scroll', tabindex: '0', role: 'group', 'aria-label': name + '匯總結果' },
       h('table', { class: 'sheet is-result' }, h('thead', null, head), body)));
 
-    var names = [LABELS.total].concat(GROUPS.map(function (gr) { return gr.label; }));
+    var names = [LABELS.total].concat(plan.groups.map(function (gr) { return gr.label; }));
     function explain(i, prefix) {
       var L = XIO.numToCol(plan.months[i].col);
       var f = XIO.mpsTotalsFormulas(plan, opts, i);

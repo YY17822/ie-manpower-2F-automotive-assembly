@@ -350,7 +350,7 @@
     var headers = monthCols.map(function (mc) { return S.headerEdits[mc] || ''; });
     var emptyHead = monthCols.filter(function (mc, i) { return !XIO.normalizeText(headers[i]); });
     if (emptyHead.length) {
-      setSummary('在上面「各月的表頭」輸入 ' + XIO.formatColumns(emptyHead) + ' 行的月份。');
+      setSummary('在上面「各月的表頭」選當月、輸入 ' + XIO.formatColumns(emptyHead) + ' 行的月份（可以按「自動帶出其餘月份」）。');
       return;
     }
 
@@ -424,28 +424,56 @@
     els.headers.removeAttribute('data-cols');
   }
 
-  // 每個月一個輸入框，由使用者輸入月份，記在 S.headerEdits。
+  // 每個月一格，記在 S.headerEdits。當月是下拉選單（Jan.～Dec.），其餘月份是輸入框；
+  // 最後一格後面的按鈕「自動帶出其餘月份」：依當月往後填（Dec. 之後接 Jan.），填完還可以自己改。
   // 月份的行沒變就不重畫，打字時才不會被打斷。
+  var MONTH_NAMES = ['Jan.', 'Feb.', 'Mar.', 'Apr.', 'May.', 'Jun.', 'Jul.', 'Aug.', 'Sep.', 'Oct.', 'Nov.', 'Dec.'];
   function renderHeaderInputs(monthCols) {
     var key = monthCols.join(',');
     if (els.headers.getAttribute('data-cols') === key && els.headers.childNodes.length) return;
     els.headers.setAttribute('data-cols', key);
     els.headers.textContent = '';
+    var inputs = [];
+    function changed() {
+      els.exportNote.textContent = '';
+      clearTimeout(timer);
+      timer = setTimeout(function () { refresh(true); }, 250);
+    }
     monthCols.forEach(function (mc, i) {
       var id = 'f4-head-' + mc;
-      var input = h('input', {
-        id: id, type: 'text', class: 'in in-month', autocomplete: 'off',
-        value: S.headerEdits[mc] || '', placeholder: i === 0 ? '例如 Oct' : null
-      });
-      input.addEventListener('input', function () {
-        S.headerEdits[mc] = input.value;
-        els.exportNote.textContent = '';
-        clearTimeout(timer);
-        timer = setTimeout(function () { refresh(true); }, 250);
-      });
+      var input;
+      if (i === 0) {
+        input = h('select', { id: id, class: 'in-select in-month' });
+        input.appendChild(h('option', { value: '', text: '請選擇' }));
+        var cur = S.headerEdits[mc] || '';
+        if (cur && MONTH_NAMES.indexOf(cur) < 0) input.appendChild(h('option', { value: cur, text: cur }));   // 以前自己打的字
+        MONTH_NAMES.forEach(function (m) { input.appendChild(h('option', { value: m, text: m })); });
+        input.value = cur;
+        input.addEventListener('change', function () { S.headerEdits[mc] = input.value; autoBtn.disabled = MONTH_NAMES.indexOf(input.value) < 0; changed(); });
+      } else {
+        input = h('input', { id: id, type: 'text', class: 'in in-month', autocomplete: 'off', value: S.headerEdits[mc] || '' });
+        input.addEventListener('input', function () { S.headerEdits[mc] = input.value; changed(); });
+      }
+      inputs.push(input);
       els.headers.appendChild(h('div', { class: 'month-head' },
         h('label', { for: id, text: XIO.numToCol(mc) + ' 行' + (i === 0 ? '（當月）' : '') }), input));
     });
+    var autoBtn = h('button', {
+      type: 'button', class: 'btn-secondary btn-small month-auto', text: '自動帶出其餘月份',
+      onclick: function () {
+        var start = MONTH_NAMES.indexOf(inputs[0].value);
+        if (start < 0) return;
+        monthCols.forEach(function (mc, i) {
+          if (i === 0) return;
+          var m = MONTH_NAMES[(start + i) % 12];
+          inputs[i].value = m;
+          S.headerEdits[mc] = m;
+        });
+        changed();
+      }
+    });
+    autoBtn.disabled = !inputs.length || MONTH_NAMES.indexOf(inputs[0].value) < 0;
+    if (monthCols.length > 1) els.headers.appendChild(h('div', { class: 'month-head month-auto-box' }, h('span', { 'aria-hidden': 'true', text: ' ' }), autoBtn));
   }
 
   function setSummary(text, isError, isWarn) {

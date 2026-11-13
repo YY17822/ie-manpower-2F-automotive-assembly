@@ -21,9 +21,9 @@
  *   從 MPS 工作表抓的列（都是公式；用標籤文字找出是哪一列）：
  *     MPS(PCS) 量產、試產    ← 第 2 步匯總的「量產」「試產」那一列（當月已含 WIP）
  *     （匯總表有兩張：取像＋車用、光機系統，兩張的同一列相加，例如 ='MPS'!E42+'MPS'!E95）
- *     MPS(PCS) RMA          ← 原本的第 7 步 RMA 已經拿掉（之後改成在第 1 步挑選 RMA 的列），先留空白
+ *     MPS(PCS) RMA          ← 第 2 步【RMA】那張的 Total（RMA 是第 1 步挑出來的）
  *     需求工時-量產、-試產   ← 第 6 步「量產總需求工時」「試產總需求工時」
- *     需求工時-重工         ← 同上，先留空白
+ *     需求工時-重工         ← 第 6 步【RMA】那張的「RMA總需求工時」
  *
  *   使用者在畫面上輸入的列：
  *     平日工作天數     各月自己輸入（每個月不同，不記住）
@@ -631,7 +631,7 @@
       } else {
         var first = info.refs[0], last = info.refs[info.refs.length - 1];
         var rowsText = (info.rows || [info.row]).join('、');
-        src = '「' + link.label + '」第 ' + rowsText + ' 列' +
+        src = (link.rma ? 'RMA 的' : '') + '「' + link.label + '」第 ' + rowsText + ' 列' +
           (first ? '，' + XIO.numToCol(first.col) + ' 到 ' + XIO.numToCol(last.col) + ' 行' : '') +
           (info.rows && info.rows.length > 1 ? '（' + info.rows.length + ' 張匯總表相加）' : '');
         if (info.refs.length < months) {
@@ -654,10 +654,6 @@
       }
       body.appendChild(tr);
     });
-
-    // MPS(PCS) RMA、需求工時-重工：原本的第 7 步 RMA 已經拿掉，之後改成在第 1 步挑選 RMA 的列
-    els.notes.appendChild(h('li', null, rowLabel.mpsRma + '、' + rowLabel.hoursRework +
-      '：RMA 之後改成在第 1 步挑選，這兩列先留空白。'));
 
     var ex = work.links.mpsMass.found && work.links.mpsMass.refs[0];
     var exText = ex ? (ex.parts || [ex]).map(function (p) { return "'" + p.sheet + "'!" + XIO.numToCol(p.col) + p.row; }).join('+') : '';

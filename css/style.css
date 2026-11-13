@@ -417,3 +417,14 @@ button.step:hover { background: rgba(11, 110, 105, 0.07); }
 .cat-tag { display: inline-block; padding: 0.0625rem 0.5rem; border-radius: 2px; background: #E9C46A; color: var(--ink); font-size: 0.875rem; font-weight: 700; }
 .cat-tag.is-empty { background: none; border: 1px dashed var(--warn); color: var(--warn); font-weight: 400; }
 .notes li.hint-item { color: var(--ink-2); }
+
+/* 第 1 步：挑出 RMA（模糊比對時可以取消勾選） */
+.rma-items label.fz-item { cursor: pointer; }
+.rma-items label.fz-item:hover { background: var(--line-soft); }
+.rma-items input[type=checkbox] { width: 1.05rem; height: 1.05rem; accent-color: var(--teal); margin: 0; flex: none; align-self: center; }
+.rma-items li.is-off .fz-val, .rma-items li.is-off .fz-ctx, .rma-items li.is-off .blank-row { color: #9AA7AB; text-decoration: line-through; }
+
+/* 第 5 步：各月的表頭（當月是下拉選單，後面有「自動帶出其餘月份」） */
+.month-head select.in-month { width: auto; min-width: 7rem; }
+.month-auto-box { justify-content: flex-end; }
+.month-auto-box span { font-size: 0.875rem; }

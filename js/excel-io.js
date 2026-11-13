@@ -755,11 +755,17 @@
    * 回傳 { matched, total, nextRow }（nextRow = 下一個空的列號）
    */
   function appendFilteredRows(ows, outRow, ws, o) {
+    var sel = selectRows(ws, o);
+    var next = copyRows(ows, outRow, ws, sel.rows, o.keepCols);
+    return { matched: sel.rows.length, total: sel.total, nextRow: next };
+  }
+
+  // 符合選取條件的列（列號，由上往下）；規則見 appendFilteredRows()
+  function selectRows(ws, o) {
     var wanted = {};
     o.values.forEach(function (v) { wanted[matchKey(v)] = true; });
-    var keepCols = o.keepCols;
     var fzTerms = o.fuzzy ? fuzzyTerms(o.values) : null;   // 模糊比對（第三種選取方式）
-    var matched = 0;
+    var rows = [];
     var total = 0;
     for (var r = o.dataStartRow; r <= o.lastRow; r++) {
       total++;
@@ -776,7 +782,15 @@
         if (key === '') continue;                                // 選取行空白的列一律不要
         if (o.op === 'neq' ? !!wanted[key] : !wanted[key]) continue;
       }
-      matched++;
+      rows.push(r);
+    }
+    return { rows: rows, total: total };
+  }
+
+  // 把 ws 的這幾列（只要 keepCols 這幾行）依序寫到 ows 的第 outRow 列起；回傳下一個空的列號
+  function copyRows(ows, outRow, ws, rows, keepCols) {
+    rows.forEach(function (r) {
+      var srcRow = ws.findRow(r);
       var dstRow = ows.getRow(outRow++);
       if (srcRow.height) dstRow.height = srcRow.height;
       for (var i = 0; i < keepCols.length; i++) {
@@ -787,13 +801,98 @@
         var val = exportValue(src);
         if (val !== null) dst.value = val;
       }
+    });
+    return outRow;
+  }
+
+  /* ---------- 第 1 步：挑出 RMA ---------- */
+
+  /*
+   * RMA 的條件（一組，套用到所有報表留下來的列）：
+   *   rma = { col, fuzzy, values, skip }
+   *     col     新檔的第幾行（1 起算）；每份報表用它自己保留的第 col 個行去比
+   *     fuzzy   true = 模糊比對（含有任一個值）；false = 等於任一個值
+   *     values  要比對的值（字串陣列，空的不算）
+   *     skip    { '報表 id:列號': true }：模糊比對時使用者取消勾選的列（不算 RMA）
+   * 那一行空白的列不會是 RMA。col 是 0 或沒有值時，不挑出任何 RMA。
+   */
+  function rmaMatcher(rma) {
+    if (!rma || !rma.col) return null;
+    var values = (rma.values || []).filter(function (v) { return normalizeText(v) !== ''; });
+    if (!values.length) return null;
+    if (rma.fuzzy) {
+      var terms = fuzzyTerms(values);
+      return function (raw) { return fuzzyText(raw) !== '' && fuzzyHit(raw, terms) !== ''; };
     }
-    return { matched: matched, total: total, nextRow: outRow };
+    var wanted = {};
+    values.forEach(function (v) { wanted[matchKey(v)] = true; });
+    return function (raw) { var k = matchKey(raw); return k !== '' && !!wanted[k]; };
+  }
+  function rmaRaw(ws, r, keepCols, col) {
+    var src = keepCols[col - 1];
+    var row = ws.findRow(r);
+    return src && row ? cellRawValue(row.findCell(src)) : null;
+  }
+
+  /*
+   * 給畫面用：各報表留下來的列裡，RMA 那一行出現過哪些值、哪些列符合 RMA 的條件。
+   *   parts、common 和 filterSections() 一樣（parts[k].id 是報表的代號，用來對 skip）
+   * 回傳 { values: [{ key, label, count }], blank, hits: [{ id, part, row, value, text, skipped }] }
+   *   hits 依 取像 → 車用 → 光機系統 的順序（和放進【RMA】的順序一樣）
+   */
+  function rmaScan(parts, common, rma) {
+    var out = { values: [], blank: 0, hits: [] };
+    if (!rma || !rma.col) return out;
+    var match = rmaMatcher(rma);
+    var counts = {}, order = [];
+    var skip = rma.skip || {};
+    sectionOrder(parts).forEach(function (k) {
+      var p = parts[k];
+      var o = partOpts(p, common);
+      selectRows(p.ws, o).rows.forEach(function (r) {
+        var raw = rmaRaw(p.ws, r, p.keepCols, rma.col);
+        var key = matchKey(raw);
+        if (key === '') { out.blank++; return; }
+        if (!counts[key]) {
+          var pv = plainValue(raw);
+          counts[key] = { key: key, label: pv instanceof Date ? pv.toISOString().slice(0, 10) : normalizeText(pv), count: 0 };
+          order.push(key);
+        }
+        counts[key].count++;
+        if (!match || !match(raw)) return;
+        var ctx = [];
+        for (var i = 0; i < p.keepCols.length && ctx.length < 3; i++) {
+          if (i === rma.col - 1) continue;
+          var cv = plainValue(rmaRaw(p.ws, r, p.keepCols, i + 1));
+          var s = cv === null || cv === undefined ? '' : normalizeText(cv instanceof Date ? cv.toISOString().slice(0, 10) : cv);
+          if (s !== '') ctx.push(s.length > 30 ? s.slice(0, 30) + '…' : s);
+        }
+        out.hits.push({ id: p.id, part: k, row: r, value: counts[key].label, text: ctx.join('｜'), skipped: !!skip[p.id + ':' + r] });
+      });
+    });
+    out.values = order.map(function (k) { return counts[k]; });
+    return out;
+  }
+
+  // 報表的順序：照 取像 → 車用 → 光機系統，同一類照上傳順序（回傳 parts 的索引）
+  function sectionOrder(parts) {
+    var out = [];
+    MPS_SECTIONS.forEach(function (sec) {
+      parts.forEach(function (p, k) { if (p.cat === sec.key) out.push(k); });
+    });
+    return out;
+  }
+  function partOpts(p, common) {
+    return {
+      dataStartRow: common.dataStartRow, selectorCol: p.selectorCol || common.selectorCol,
+      values: p.values, op: p.op, fuzzy: !!p.fuzzy, exclude: !!p.exclude,
+      keepCols: p.keepCols, lastRow: p.lastRow
+    };
   }
 
   /*
    * 好幾份 MPS 報表篩選後，依類別分段排成一張表（第 1 步）。
-   *   parts   [{ ws, cat, values, keepCols, lastRow, selectorCol, op, fuzzy, exclude }]，依上傳順序
+   *   parts   [{ id, ws, cat, values, keepCols, lastRow, selectorCol, op, fuzzy, exclude }]，依上傳順序（id 對 rma.skip 用）
    *           cat：'image' 取像、'auto' 車用、'optics' 光機系統（MPS_SECTIONS）
    *   common  { dataStartRow, selectorCol }
    * 版面：表頭（第 1 列到 dataStartRow-1）用第一份報表的。之後照 取像 → 車用 → 光機系統 的順序，
@@ -801,53 +900,83 @@
    *   同一類有好幾份時照上傳順序往下接，中間不畫線。
    *   取像最後一列之後空 3 列才是【車用】；取像＋車用這一組最後一列之後，空 1 列留 3 列給第 2 步的匯總表，
    *   再空 6 列才是【光機系統】。這個月沒有檔案的類別整段不放。
+   *   rma     RMA 的條件（見 rmaMatcher()）。有給的話（就算沒有條件）最後一定放【RMA】段：
+   *           最後一張匯總表下面空 3 列放【RMA】標題（底色 #FFCAD4），底下是挑出來的列（照 取像 → 車用 → 光機系統 的順序），
+   *           再空 1 列給第 2 步的 RMA Total。挑去 RMA 的列不會留在原本的段裡；一類的列全部挑走時，那一類整段不放。
    * 回傳和 filter() 一樣，另外多：
-   *   parts     [{ matched, total, firstRow, lastRow, cat }]（和 parts 同順序）
-   *   sections  [{ key, label, group, titleRow, firstRow, lastRow, matched }]
+   *   parts     [{ matched, rma, total, firstRow, lastRow, cat }]（和 parts 同順序；matched 不含挑去 RMA 的列）
+   *   sections  [{ key, label, group, titleRow, firstRow, lastRow, matched }]（最後一個是 RMA）
    */
-  function filterSections(parts, common) {
-    function optsOf(p) {
-      return {
-        dataStartRow: common.dataStartRow, selectorCol: p.selectorCol || common.selectorCol,
-        values: p.values, op: p.op, fuzzy: !!p.fuzzy, exclude: !!p.exclude,
-        keepCols: p.keepCols, lastRow: p.lastRow
-      };
-    }
+  function filterSections(parts, common, rma) {
     // 先只做表頭（資料一列都不放）
-    var res = filter(parts[0].ws, Object.assign(optsOf(parts[0]), { lastRow: common.dataStartRow - 1 }));
+    var res = filter(parts[0].ws, Object.assign(partOpts(parts[0], common), { lastRow: common.dataStartRow - 1 }));
     var ws = res.worksheet;
     var colCount = res.colCount;
-    var info = parts.map(function (p) { return { matched: 0, total: 0, firstRow: 0, lastRow: 0, cat: p.cat }; });
+    var match = rmaMatcher(rma);
+    var skip = (rma && rma.skip) || {};
+    // 每份報表留下來的列，分成一般的和 RMA
+    var picked = parts.map(function (p) {
+      var sel = selectRows(p.ws, partOpts(p, common));
+      var normal = [], rmaRows = [];
+      sel.rows.forEach(function (r) {
+        var isRma = match && !skip[p.id + ':' + r] && match(rmaRaw(p.ws, r, p.keepCols, rma.col));
+        (isRma ? rmaRows : normal).push(r);
+      });
+      return { total: sel.total, normal: normal, rma: rmaRows };
+    });
+    var info = parts.map(function (p, k) {
+      return { matched: 0, rma: picked[k].rma.length, total: picked[k].total, firstRow: 0, lastRow: 0, cat: p.cat };
+    });
     var sections = [];
     var cursor = res.headerEnd + 1;
     var prev = null;
-    var matched = 0, total = 0;
+    var matched = 0;
     var headCell = res.headerEnd >= 1 ? ws.findCell(res.headerEnd, 1) : null;
     var font = Object.assign({}, headCell && headCell.style && headCell.style.font, { bold: true });
     MPS_SECTIONS.forEach(function (sec) {
       var idx = [];
-      parts.forEach(function (p, k) { if (p.cat === sec.key) idx.push(k); });
-      if (!idx.length) return;
+      parts.forEach(function (p, k) { if (p.cat === sec.key && picked[k].normal.length) idx.push(k); });
+      if (!idx.length) return;                     // 這一類沒有列（沒有檔案，或全部都挑去 RMA）：整段不放
       if (prev) cursor += prev.group === sec.group ? SECTION_GAP : 1 + TOTALS_ROWS + GROUP_GAP;
       var titleRow = cursor;
-      writeSectionTitle(ws, titleRow, colCount, sec.label, font);
+      writeSectionTitle(ws, titleRow, colCount, sec.label, font, SECTION_FILL);
       var next = titleRow + 1;
       var s = { key: sec.key, label: sec.label, group: sec.group, titleRow: titleRow, firstRow: next, lastRow: titleRow, matched: 0 };
       idx.forEach(function (k) {
-        var add = appendFilteredRows(ws, next, parts[k].ws, optsOf(parts[k]));
-        info[k] = { matched: add.matched, total: add.total, firstRow: next, lastRow: add.nextRow - 1, cat: sec.key };
-        s.matched += add.matched;
-        matched += add.matched;
-        total += add.total;
-        next = add.nextRow;
+        var rows = picked[k].normal;
+        var end = copyRows(ws, next, parts[k].ws, rows, parts[k].keepCols);
+        info[k].matched = rows.length;
+        info[k].firstRow = next;
+        info[k].lastRow = end - 1;
+        s.matched += rows.length;
+        matched += rows.length;
+        next = end;
       });
       s.lastRow = next - 1;
       sections.push(s);
       cursor = next;
       prev = sec;
     });
+    // 【RMA】：最後一張匯總表下面空 3 列（沒有其他段時接在表頭下面）。沒有挑出 RMA 也一樣放標題
+    if (rma) {
+      if (prev) cursor += 1 + TOTALS_ROWS + RMA_GAP;
+      var rTitle = cursor;
+      writeSectionTitle(ws, rTitle, colCount, RMA_SECTION.label, font, RMA_FILL);
+      var rNext = rTitle + 1;
+      var rs = { key: RMA_SECTION.key, label: RMA_SECTION.label, group: RMA_SECTION.group, titleRow: rTitle, firstRow: rNext, lastRow: rTitle, matched: 0 };
+      sectionOrder(parts).forEach(function (k) {
+        var rows = picked[k].rma;
+        if (!rows.length) return;
+        rNext = copyRows(ws, rNext, parts[k].ws, rows, parts[k].keepCols);
+        rs.matched += rows.length;
+      });
+      matched += rs.matched;
+      rs.lastRow = rNext - 1;
+      sections.push(rs);
+      cursor = rNext;
+    }
     res.matchedRows = matched;
-    res.totalRows = total;
+    res.totalRows = picked.reduce(function (n, x) { return n + x.total; }, 0);
     res.lastRow = cursor - 1;
     res.parts = info;
     res.sections = sections;
@@ -855,8 +984,8 @@
     return res;
   }
 
-  // 類別標題列：跨所有保留的行合併，粗體置中，底色 #E9C46A，外框細線
-  function writeSectionTitle(ws, r, colCount, text, font) {
+  // 類別標題列：跨所有保留的行合併，粗體置中，底色 #E9C46A（RMA 是 #FFCAD4），外框細線
+  function writeSectionTitle(ws, r, colCount, text, font, fill) {
     var THIN = { style: 'thin' };
     for (var c = 1; c <= Math.max(colCount, 1); c++) {
       var border = { top: THIN, bottom: THIN };
@@ -864,7 +993,7 @@
       if (c === colCount) border.right = THIN;
       ws.getCell(r, c).style = {
         font: font,
-        fill: SECTION_FILL,
+        fill: fill || SECTION_FILL,
         alignment: { horizontal: 'center', vertical: 'middle' },
         border: border
       };
@@ -1509,18 +1638,24 @@
     { key: 'auto', label: '車用', group: 0 },
     { key: 'optics', label: '光機系統', group: 1 }
   ];
-  var MPS_SECTION_GROUPS = [{ label: '取像＋車用' }, { label: '光機系統' }];
+  var MPS_SECTION_GROUPS = [{ label: '取像＋車用' }, { label: '光機系統' }, { label: 'RMA' }];
   var SECTION_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE9C46A' } };
+  // RMA：第 1 步從各報表留下來的列裡挑出來的，放在最下面（最後一張匯總表下面空 3 列），標題底色 #FFCAD4。
+  // 匯總表只有 Total 一列（不分量產、試產）。這個月沒有挑出 RMA 也一樣放標題和 Total（沒有項目）。
+  var RMA_SECTION = { key: 'rma', label: 'RMA', group: 2 };
+  var RMA_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFCAD4' } };
+  var RMA_GAP = 3;                              // 最後一張匯總表下面空幾列才是【RMA】
   var SECTION_GAP = 3;                          // 同一組的兩段之間空幾列（取像最後一列之後空 3 列才是【車用】）
   var GROUP_GAP = 6;                            // 一組的匯總表下面空幾列才是下一組（【光機系統】）
   var TOTALS_ROWS = 1 + STATUS_GROUPS.length;   // 匯總表幾列：Total、量產、試產
 
-  // 這一列是不是類別標題：第 1 行的字剛好是「取像」「車用」「光機系統」
+  // 這一列是不是類別標題：第 1 行的字剛好是「取像」「車用」「光機系統」「RMA」
   function sectionTitleOf(ws, r) {
     var cell = ws.findCell(r, 1);
     if (!cell) return null;
     var t = normalizeText(displayText(cell));
     for (var i = 0; i < MPS_SECTIONS.length; i++) if (MPS_SECTIONS[i].label === t) return MPS_SECTIONS[i];
+    if (t === RMA_SECTION.label) return RMA_SECTION;
     return null;
   }
 
@@ -1530,8 +1665,9 @@
    * 回傳 {
    *   sections  [{ key, label, group, titleRow, firstRow, lastRow, count }]
    *             每一段資料的範圍：類別標題下面、料號那一行有內容的第一列到最後一列
-   *   groups    [{ label, sections, ranges: [[第一列, 最後一列]…], firstRow, lastRow, tableRow }]
-   *             要一起匯總的段（取像＋車用、光機系統）；tableRow = 匯總表第一列（這一組最後一列資料之後空一列）
+   *   groups    [{ label, isRma, sections, ranges: [[第一列, 最後一列]…], firstRow, lastRow, tableRow }]
+   *             要一起匯總的段（取像＋車用、光機系統、RMA）；tableRow = 匯總表第一列（這一組最後一列資料之後空一列）
+   *             RMA 沒有項目時 ranges 是空的，tableRow 是標題下面空一列
    *   legacy    true = 舊版的檔案（沒有類別標題）：整塊資料當作一段、一張匯總表
    *   dataRows  料號那一行有內容的資料列（列號，由上往下）；標題列、空列、匯總表都不算
    *   count     資料列數
@@ -1565,16 +1701,21 @@
     }
     var groups = [];
     sections.forEach(function (s) {
-      if (!s.count) return;
+      var isRma = s.key === RMA_SECTION.key;
+      if (!s.count && !isRma) return;
       var g = null;
       groups.forEach(function (x) { if (x.index === s.group) g = x; });
       if (!g) {
-        g = { index: s.group, label: legacy ? '' : MPS_SECTION_GROUPS[s.group].label, sections: [], ranges: [], firstRow: s.firstRow, lastRow: 0 };
+        g = { index: s.group, label: legacy ? '' : MPS_SECTION_GROUPS[s.group].label, isRma: isRma, sections: [], ranges: [], firstRow: s.firstRow, lastRow: 0 };
         groups.push(g);
       }
       g.sections.push(s);
-      g.ranges.push([s.firstRow, s.lastRow]);
-      g.lastRow = s.lastRow;
+      if (s.count) {
+        g.ranges.push([s.firstRow, s.lastRow]);
+        g.lastRow = s.lastRow;
+      } else {
+        g.lastRow = s.titleRow;                    // RMA 沒有項目：Total 在標題下面空一列
+      }
     });
     groups.forEach(function (g) { g.tableRow = g.lastRow + 2; });
     return { sections: sections, groups: groups, legacy: legacy, dataRows: dataRows, count: dataRows.length };
@@ -1630,13 +1771,14 @@
     var counts = groups.map(function () { return 0; });
     var others = [];
     var tables = layout.groups.map(function (g) {
-      var sg = statusGroupsOf(main, o, groupRowsOf(layout, g), groups);
+      var tg = g.isRma ? [] : groups;                // RMA 只有 Total，不分量產、試產
+      var sg = g.isRma ? { groupOf: {}, counts: [], others: [] } : statusGroupsOf(main, o, groupRowsOf(layout, g), groups);
       sg.counts.forEach(function (n, k) { counts[k] += n; });
       others = others.concat(sg.others);
       var months = o.monthCols.map(function (c, i) {
         var error = null;
         var total = 0;
-        var sums = groups.map(function () { return 0; });
+        var sums = tg.map(function () { return 0; });
         g.ranges.forEach(function (x) {
           for (var r = x[0]; r <= x[1]; r++) {
             var row = main.findRow(r);
@@ -1651,9 +1793,11 @@
         return { col: c, total: total, groups: sums, error: error };
       });
       var totalRow = g.tableRow;
-      var groupRows = groups.map(function (gr, k) { return totalRow + 1 + k; });
+      var groupRows = tg.map(function (gr, k) { return totalRow + 1 + k; });
       return {
         label: g.label,
+        isRma: !!g.isRma,
+        groups: tg,
         sections: g.sections,
         ranges: g.ranges,
         firstRow: g.firstRow,
@@ -1687,8 +1831,9 @@
     var month = rangeRefs(m.col, table.ranges);
     var wip = rangeRefs(o.wipCol, table.ranges);
     var stat = rangeRefs(o.statusCol, table.ranges, true);
+    if (!table.ranges.length) return [''].concat(table.groups.map(function () { return ''; }));   // RMA 沒有項目：填 0
     var out = [i === 0 ? sumOf(wip) + '+' + sumOf(month) : sumOf(month)];
-    (o.groups || STATUS_GROUPS).forEach(function (gr) {
+    table.groups.forEach(function (gr) {
       var crit = critOf(gr);
       out.push(i === 0 ? sumIfOf(stat, crit, wip) + '+' + sumIfOf(stat, crit, month) : sumIfOf(stat, crit, month));
     });
@@ -1735,7 +1880,7 @@
 
   function writeMpsTotalsTable(main, plan, o) {
     var rows = plan.rows;
-    var texts = [o.labels.total].concat((o.groups || STATUS_GROUPS).map(function (gr) { return gr.label; }));
+    var texts = [o.labels.total].concat(plan.groups.map(function (gr) { return gr.label; }));
     var leftCol = plan.labelCol || Math.min.apply(null, o.monthCols);
     var rightCol = Math.max.apply(null, o.monthCols);
     var noteCol = plan.label && plan.labelCol > 1 && plan.labelCol - 1 !== o.keyCol ? plan.labelCol - 1 : 0;
@@ -1760,7 +1905,7 @@
         right: c === rightCol ? THICK : THIN
       };
     }
-    var sample = main.findCell(plan.firstRow, o.monthCols[0]);
+    var sample = plan.firstRow ? main.findCell(plan.firstRow, o.monthCols[0]) : null;
     var font = sample && sample.style && sample.style.font ? Object.assign({}, sample.style.font) : undefined;
     if (font) delete font.bold;
 
@@ -1773,7 +1918,7 @@
         if (font) style.font = font;
         if (j === 0) style.fill = TOTAL_FILL;
         cell.style = style;
-        cell.value = { formula: formulas[j], result: m.error ? { error: m.error } : results[j] };
+        cell.value = formulas[j] ? { formula: formulas[j], result: m.error ? { error: m.error } : results[j] } : 0;
       });
     });
 
@@ -1830,14 +1975,15 @@
     var counts = groups.map(function () { return 0; });
     var others = [];
     base.tables = layout.groups.map(function (g) {
-      var sg = statusGroupsOf(main, o, groupRowsOf(layout, g), groups);
+      var tg = g.isRma ? [] : groups;                // RMA 只有一列（RMA總需求工時）
+      var sg = g.isRma ? { groupOf: {}, counts: [], others: [] } : statusGroupsOf(main, o, groupRowsOf(layout, g), groups);
       sg.counts.forEach(function (n, k) { counts[k] += n; });
       others = others.concat(sg.others);
       var months = [];
       for (var c = block.col; c < block.col + block.width; c++) {
         var error = null;
         var total = 0;
-        var sums = groups.map(function () { return 0; });
+        var sums = tg.map(function () { return 0; });
         g.ranges.forEach(function (x) {
           for (var r = x[0]; r <= x[1]; r++) {
             var row = main.findRow(r);
@@ -1851,9 +1997,11 @@
         months.push({ col: c, header: headCell ? displayText(headCell) : '', total: total, groups: sums, error: error });
       }
       var totalRow = g.tableRow;
-      var groupRows = groups.map(function (gr, k) { return totalRow + 1 + k; });
+      var groupRows = tg.map(function (gr, k) { return totalRow + 1 + k; });
       return {
         label: g.label,
+        isRma: !!g.isRma,
+        groups: tg,
         ranges: g.ranges,
         firstRow: g.firstRow,
         lastRow: g.lastRow,
@@ -1872,9 +2020,10 @@
 
   // 需求工時匯總一張表、一個月的公式（不含開頭的 =）：[Production, 各組…]
   function summaryFormulas(table, o, m) {
+    if (!table.ranges.length) return [''];          // RMA 沒有項目：填 0
     var range = rangeRefs(m.col, table.ranges);
     var stat = rangeRefs(o.statusCol, table.ranges, true);
-    return [sumOf(range)].concat((o.groups || STATUS_GROUPS).map(function (gr) {
+    return [sumOf(range)].concat(table.groups.map(function (gr) {
       return sumIfOf(stat, critOf(gr), range);
     }));
   }
@@ -1891,7 +2040,7 @@
    *       外框粗線、裡面細格線。Production 那一列整列是淺藍色底（#A2D2FF）。
    * 不再標示前三大（舊版加在需求工時上的淺橘色條件式格式，重做時會拿掉）。
    *
-   * o.labels = { total, groups: [各組的標籤] }
+   * o.labels = { total, groups: [各組的標籤], rma: RMA 那張的標籤（預設「RMA總需求工時」） }
    * 其餘參數和 planSummary 一樣，回傳的也是同一份結果。
    */
   function addSummaryRows(main, o) {
@@ -1920,7 +2069,7 @@
     var endCol = plan.startCol + plan.width - 1;
     var leftCol = plan.labelCol || plan.startCol;       // 整塊最左邊那一行
     var rows = table.rows;
-    var texts = [o.labels.total].concat(o.labels.groups);
+    var texts = table.isRma ? [o.labels.rma || 'RMA總需求工時'] : [o.labels.total].concat(o.labels.groups);
 
     // 重做時，先把這幾列原本的內容清掉。只清這一塊的行，同一列左邊有 MPS 的匯總。
     rows.forEach(function (r) {
@@ -1954,9 +2103,9 @@
         var cell = main.getCell(r, m.col);
         var style = { numFmt: INTEGER_FORMAT, border: boxBorder(r, m.col), alignment: { vertical: 'middle' } };
         if (font) style.font = font;
-        if (i === 0) style.fill = HEAD_FILL;                   // Production 那一列
+        if (i === 0) style.fill = HEAD_FILL;                   // Production（RMA 那張是 RMA總需求工時）那一列
         cell.style = style;
-        cell.value = { formula: formulas[i], result: m.error ? { error: m.error } : results[i] };
+        cell.value = formulas[i] ? { formula: formulas[i], result: m.error ? { error: m.error } : results[i] } : 0;
       });
     });
 
@@ -2189,14 +2338,17 @@
    * 總表各列要從 MPS 工作表哪一列抓數值：用列的文字標籤找。
    *   量產、試產               第 2 步匯總（當月已含 WIP）
    *   量產總需求工時、試產總需求工時   第 6 步
+   *   RMA 的 Total              第 2 步 RMA 那張（只有 Total 一列；用【RMA】段找到是哪一列）
+   *   RMA總需求工時             第 6 步 RMA 那張
    * 匯總表有兩張（取像＋車用、光機系統）時，兩張的同一列相加，例如 ='MPS'!E42+'MPS'!E95。
-   * MPS(PCS) RMA、需求工時-重工：原本的第 7 步 RMA 已經拿掉（之後改成在第 1 步挑選 RMA 的列），這兩列先留空白。
    */
   var REPORT_LINKS = [
     { key: 'mpsMass', label: '量產', step: 2 },
     { key: 'mpsTrial', label: '試產', step: 2 },
+    { key: 'mpsRma', label: 'Total', step: 2, rma: true },
     { key: 'hoursMass', label: '量產總需求工時', step: 6 },
-    { key: 'hoursTrial', label: '試產總需求工時', step: 6 }
+    { key: 'hoursTrial', label: '試產總需求工時', step: 6 },
+    { key: 'hoursRework', label: 'RMA總需求工時', step: 6 }
   ];
 
   function labelMatchKey(v) {
@@ -2207,6 +2359,7 @@
    * 在 MPS 工作表找出總表各列的來源。
    *   o.dataStartRow  資料從第幾列開始（標籤只在這一列以下找，避免找到表頭的字）
    *   o.months        幾個月（6）
+   *   o.keyCol        料號在哪一行（找【RMA】段用，預設第 1 行）
    * 回傳 { section: { found, row, rows, labelCol, refs: [{ sheet, col, row, value, parts }] }, … }
    * 數值是標籤右邊的格子，由左往右取 months 個（空白略過，碰到文字就停）。
    * 同一個標籤出現好幾次（匯總表有兩張：取像＋車用、光機系統）時全部都抓，同一個月相加：
@@ -2216,11 +2369,14 @@
   function findReportLinks(main, o) {
     var ext = extent(main);
     var out = {};
+    var rmaGroup = mpsLayout(main, { dataStartRow: o.dataStartRow || 1, keyCol: o.keyCol || 1 }).groups
+      .filter(function (g) { return g.isRma; })[0];
     REPORT_LINKS.forEach(function (link) {
       var want = labelMatchKey(link.label);
       var hits = [];
       eachStoredRow(main, function (row, r) {
         if (r < (o.dataStartRow || 1)) return;
+        if (link.rma && (!rmaGroup || r !== rmaGroup.tableRow)) return;   // RMA 的 Total 只看【RMA】那張
         eachStoredCell(row, function (cell, c) {
           if (cell.isMerged && cell.master !== cell) return;
           var v = plainValue(cellRawValue(cell));
@@ -2585,7 +2741,7 @@
   }
 
   var ExcelIO = {
-    VERSION: 12,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
+    VERSION: 14,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
     colToNum: colToNum,
     numToCol: numToCol,
     normalizeText: normalizeText,
@@ -2606,6 +2762,8 @@
     extent: extent,
     filter: filter,
     filterSections: filterSections,
+    rmaScan: rmaScan,
+    RMA_SECTION: RMA_SECTION,
     MPS_SECTIONS: MPS_SECTIONS,
     MPS_SECTION_GROUPS: MPS_SECTION_GROUPS,
     mpsLayout: mpsLayout,
