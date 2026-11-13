@@ -91,6 +91,7 @@
    * o.caption     表格上方的說明文字
    * o.keep        { 行號: true }，要用螢光筆標示的行（可省略）
    * o.keepRows    { 列號: true }，要標示的列（可省略）。有給的話，只有「標示的列 × 標示的行」交叉的格子畫螢光
+   * o.keepSet     { 列號: true }，會留下的列（可省略）；有給的話其他資料列變淡（依區塊篩選用）
    * o.onToggle    點行號時呼叫（可省略；有給的話行號會變成按鈕）
    * o.selectorCol / o.wanted  用來把不符合條件的列變淡（可省略）
    * o.wantedOp    'neq' 時改成：wanted 裡的值和空白的列變淡（「不等於」篩選用，可省略）
@@ -139,7 +140,9 @@
       var row = ws.findRow(r);
       var isHeader = r <= o.headerEnd;
       var out = false;
-      if (!isHeader && o.fuzzyTerms) {
+      if (!isHeader && o.keepSet) {
+        out = !o.keepSet[r];
+      } else if (!isHeader && o.fuzzyTerms) {
         var fv = valueOf(row && row.findCell(o.selectorCol));
         var fh = XIO.fuzzyHit(fv, o.fuzzyTerms) !== '';
         out = XIO.fuzzyText(fv) === '' || (o.exclude ? fh : !fh);

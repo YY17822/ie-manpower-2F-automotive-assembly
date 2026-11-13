@@ -760,8 +760,52 @@
     return { matched: sel.rows.length, total: sel.total, nextRow: next };
   }
 
+  /* ---------- 依區塊（TTL）篩選（第 1 步第四種篩選方式） ---------- */
+  // 指定的那一行寫著「XXXX TTL」的列是一個區塊的結尾：它上面、到前一個 TTL 列（或資料第一列）之間的列，
+  // 就是「XXXX」這個區塊（例如「3DP MPS TTL」上面那些料號是「3DP MPS」）。TTL 列本身、那一行空白的列不算。
+  // 最後一個 TTL 下面如果還有列，算成一個「最後一個 TTL 之後」的區塊。
+  var TTL_RE = /^(.*?)\s*TTL\s*$/i;
+  var TAIL_BLOCK = '（最後一個 TTL 之後）';
+  function blockKey(name) { return normalizeText(name || '').replace(/\s+/g, ' ').toLowerCase(); }
+  function cellText(raw) {
+    var pv = plainValue(raw);
+    if (pv === null || pv === undefined) return '';
+    if (pv instanceof Date) return pv.toISOString().slice(0, 10);
+    return normalizeText(String(pv));
+  }
+  // 回傳 [{ name, key, ttlRow, rows: [列號…], tail }]，由上往下
+  function ttlBlocks(ws, o) {
+    var blocks = [];
+    var cur = [];
+    for (var r = o.dataStartRow; r <= o.lastRow; r++) {
+      var row = ws.findRow(r);
+      var text = row ? cellText(cellRawValue(row.findCell(o.col))) : '';
+      var m = text ? TTL_RE.exec(text) : null;
+      if (m) {
+        var name = m[1].trim() || 'TTL';
+        blocks.push({ name: name, key: blockKey(name), ttlRow: r, rows: cur, tail: false });
+        cur = [];
+        continue;
+      }
+      if (text !== '') cur.push(r);
+    }
+    if (cur.length && blocks.length) blocks.push({ name: TAIL_BLOCK, key: blockKey(TAIL_BLOCK), ttlRow: 0, rows: cur, tail: true });
+    return blocks;
+  }
+
   // 符合選取條件的列（列號，由上往下）；規則見 appendFilteredRows()
+  //   o.blockMode true = 依區塊：o.selectorCol 那一行的 TTL 區塊，留下 o.blocks（區塊名稱）裡的那些
   function selectRows(ws, o) {
+    if (o.blockMode) {
+      var want = {};
+      (o.blocks || []).forEach(function (n) { want[blockKey(n)] = true; });
+      var picked = [];
+      ttlBlocks(ws, { dataStartRow: o.dataStartRow, lastRow: o.lastRow, col: o.selectorCol }).forEach(function (b) {
+        if (want[b.key]) picked = picked.concat(b.rows);
+      });
+      picked.sort(function (a, b) { return a - b; });
+      return { rows: picked, total: Math.max(0, o.lastRow - o.dataStartRow + 1) };
+    }
     var wanted = {};
     o.values.forEach(function (v) { wanted[matchKey(v)] = true; });
     var fzTerms = o.fuzzy ? fuzzyTerms(o.values) : null;   // 模糊比對（第三種選取方式）
@@ -886,6 +930,7 @@
     return {
       dataStartRow: common.dataStartRow, selectorCol: p.selectorCol || common.selectorCol,
       values: p.values, op: p.op, fuzzy: !!p.fuzzy, exclude: !!p.exclude,
+      blockMode: !!p.blockMode, blocks: p.blocks,
       keepCols: p.keepCols, lastRow: p.lastRow
     };
   }
@@ -2874,7 +2919,7 @@
   }
 
   var ExcelIO = {
-    VERSION: 20,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
+    VERSION: 21,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
     colToNum: colToNum,
     numToCol: numToCol,
     normalizeText: normalizeText,
@@ -2896,6 +2941,8 @@
     filter: filter,
     filterSections: filterSections,
     rmaScan: rmaScan,
+    ttlBlocks: ttlBlocks,
+    blockKey: blockKey,
     RMA_SECTION: RMA_SECTION,
     MPS_SECTIONS: MPS_SECTIONS,
     MPS_SECTION_GROUPS: MPS_SECTION_GROUPS,

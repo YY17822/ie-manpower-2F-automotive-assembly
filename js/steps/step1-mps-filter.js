@@ -6,6 +6,7 @@
  *        a. A 行等於多少（原本的方式）
  *        b. 指定某一行，等於或不等於哪些值；這一行空白的列一律不要
  *        c. 指定某一行，模糊比對（含有某些字）：含有的列選取或排除；這一行空白的列一律不要
+ *        d. 依區塊（TTL）：指定的那一行（預設 A 行）寫著「XXXX TTL」的列是區塊的結尾，勾選要哪幾個區塊的列
  *      兩種方式各報表可以混用
  *      ——各報表保留的行位置可以不同，但保留的行數和順序（相對位置）要一樣
  *   3. 指定 Status 在哪一行（區分量產、試產，後面總表會用到）
@@ -178,7 +179,7 @@
   // 篩選方式：'a' = A 行等於（原本的方式，用 values），'col' = 指定行等於／不等於（用 fcol、op、fvalues），
   // 'fz' = 指定行模糊比對（用 zCol、zOp：'eq' 含有的列選取／'ne' 含有的列排除、zValues：各輸入框的值）
   // 舊設定沒有 mode，當作 'a'
-  function modeOf(i) { var m = slot(i).mode; return m === 'col' || m === 'fz' ? m : 'a'; }
+  function modeOf(i) { var m = slot(i).mode; return m === 'col' || m === 'fz' || m === 'blk' ? m : 'a'; }
   function opOf(i) { return modeOf(i) === 'col' && slot(i).op === 'neq' ? 'neq' : 'eq'; }
   function zExclude(i) { return modeOf(i) === 'fz' && slot(i).zOp === 'ne'; }
   function oneCol(text) {
@@ -193,13 +194,17 @@
     return Array.isArray(z) && z.length ? z.map(function (v) { return String(v == null ? '' : v); }) : ['', '', ''];
   }
   // 這份報表用哪一行篩選（「指定行」「模糊比對」還沒填好時是 0）
+  // 依區塊：TTL 在哪一行（沒填就是 A 行）；勾了哪些區塊（區塊名稱）
+  function blockColOf(i) { return oneCol(slot(i).bCol === undefined || slot(i).bCol === '' ? 'A' : slot(i).bCol); }
+  function blockNames(i) { return Array.isArray(slot(i).bBlocks) ? slot(i).bBlocks.slice() : []; }
   function colFor(i) {
     var m = modeOf(i);
-    return m === 'col' ? filterCol(i) : m === 'fz' ? zColOf(i) : selCol();
+    return m === 'col' ? filterCol(i) : m === 'fz' ? zColOf(i) : m === 'blk' ? blockColOf(i) : selCol();
   }
   function valueText(i) { return (modeOf(i) === 'col' ? slot(i).fvalues : slot(i).values) || ''; }
   function setValueText(i, t) { if (modeOf(i) === 'col') slot(i).fvalues = t; else slot(i).values = t; }
   function wantedValues(i) {
+    if (modeOf(i) === 'blk') return blockNames(i);
     if (modeOf(i) === 'fz') {
       return zVals(i).map(function (v) { return XIO.normalizeText(v); }).filter(function (v) { return v !== ''; });
     }
@@ -268,7 +273,7 @@
           h('p', { class: 'hint', text: '每份報表都用同一組版面設定。「選取條件在哪一行」只用在「A 行等於」這種篩選方式。' }))),
       h('li', { class: 'task' },
         h('h2', { text: '各報表的選取條件和要保留的行' }),
-        h('p', { class: 'hint', text: '篩選方式每份報表各自選，可以混用：「A 行等於」是原本的方式；「指定行」可以選任何一行，留下等於或不等於某些值的列，那一行空白的列一律不要。' }),
+        h('p', { class: 'hint', text: '篩選方式每份報表各自選，可以混用：「A 行等於」是原本的方式；「指定行」可以選任何一行，留下等於或不等於某些值的列，那一行空白的列一律不要；「依區塊（TTL）」照「XXXX TTL」分出區塊，勾選要的區塊。' }),
         h('p', { class: 'hint', text: '每份報表保留的行位置可以不同，但行數和順序要一樣：報表 1 保留的第 1 個行，和報表 2 保留的第 1 個行，會放在新檔的同一行。' }),
         els.cards),
       h('li', { class: 'task' },
@@ -492,6 +497,7 @@
       E.boxA.hidden = m !== 'a';
       E.boxC.hidden = m !== 'col';
       E.boxZ.hidden = m !== 'fz';
+      E.boxB.hidden = m !== 'blk';
       R.infoKey = '';
       els.exportNote.textContent = '';
       recompute();
@@ -534,6 +540,22 @@
     buildZInputs(i);
 
     E.modeZ.addEventListener('change', function () { if (E.modeZ.checked) setMode('fz'); });
+
+    // 「依區塊（TTL）」方式：TTL 在哪一行、勾選要的區塊
+    E.modeB = h('input', { id: pre + 'mode-b', type: 'radio', name: pre + 'mode', value: 'blk' });
+    E.modeB.checked = mode === 'blk';
+    E.bCol = h('input', {
+      id: pre + 'bcol', type: 'text', class: 'in in-tiny', autocomplete: 'off', spellcheck: 'false',
+      placeholder: 'A', value: st.bCol === undefined ? 'A' : st.bCol, 'aria-label': 'TTL 寫在哪一行'
+    });
+    E.bList = h('div', { class: 'fz-preview' });
+    E.boxB = h('div', { class: 'filter-box', hidden: mode !== 'blk' },
+      h('div', { class: 'field-row' },
+        h('label', { for: pre + 'bcol', text: 'TTL 寫在' }), E.bCol, h('span', { text: '行' })),
+      h('p', { class: 'hint', text: '這一行寫著「XXXX TTL」的列是一個區塊的結尾：它上面、到前一個 TTL 為止的列就是「XXXX」這個區塊。勾選要的區塊，TTL 那一列和空白的列不留。勾的區塊名稱會記住。' }),
+      E.bList);
+    E.modeB.addEventListener('change', function () { if (E.modeB.checked) setMode('blk'); });
+    E.bCol.addEventListener('input', function () { slot(i).bCol = E.bCol.value; R.infoKey = ''; schedule(); });
     E.zCol.addEventListener('input', function () { slot(i).zCol = E.zCol.value; R.infoKey = ''; schedule(); });
     [E.zOpSel, E.zOpExc].forEach(function (r) {
       r.addEventListener('change', function () {
@@ -568,8 +590,9 @@
         h('span', { class: 'field-name', text: '篩選方式' }),
         h('label', { for: pre + 'mode-a' }, E.modeA, E.modeALabel, ' 行等於'),
         h('label', { for: pre + 'mode-c' }, E.modeC, '指定行 等於／不等於'),
-        h('label', { for: pre + 'mode-z' }, E.modeZ, '指定某一行，模糊比對（含有某些字）')),
-      E.boxA, E.boxC, E.boxZ,
+        h('label', { for: pre + 'mode-z' }, E.modeZ, '指定某一行，模糊比對（含有某些字）'),
+        h('label', { for: pre + 'mode-b' }, E.modeB, '依區塊（TTL）')),
+      E.boxA, E.boxC, E.boxZ, E.boxB,
       E.chips,
       h('div', { class: 'field-row' },
         h('label', { for: pre + 'cols', text: '要保留的行' }), E.cols),
@@ -625,7 +648,7 @@
     var parts = S.reports.map(function (R, i) {
       return {
         id: R.id, ws: R.ws, cat: catOf(i), values: ready[i].values, op: ready[i].op, selectorCol: ready[i].col,
-        fuzzy: ready[i].fuzzy, exclude: ready[i].exclude,
+        fuzzy: ready[i].fuzzy, exclude: ready[i].exclude, blockMode: ready[i].blockMode, blocks: ready[i].blocks,
         keepCols: ready[i].cols, lastRow: R.info.lastRow
       };
     });
@@ -716,14 +739,25 @@
     parsed.cols.forEach(function (c) { keep[c] = true; });
     var exc = zExclude(i);
     var terms = mode === 'fz' ? XIO.fuzzyTerms(values) : null;
-    var out = { ok: false, values: values, cols: parsed.cols, col: fc, op: op, fuzzy: mode === 'fz', exclude: exc };
+    var out = { ok: false, values: values, cols: parsed.cols, col: fc, op: op, fuzzy: mode === 'fz', exclude: exc,
+      blockMode: mode === 'blk', blocks: mode === 'blk' ? values : null };
     E.zPreview.textContent = '';
+    // 依區塊：找出 TTL 區塊、列出來給使用者勾，會留下的列
+    var blocks = null, keepSet = null;
+    if (mode === 'blk' && fc) {
+      blocks = XIO.ttlBlocks(R.ws, { dataStartRow: sr, lastRow: info.lastRow, col: fc });
+      keepSet = {};
+      blocks.forEach(function (b) { if (wanted[XIO.matchKey(b.name)] || values.some(function (v) { return XIO.blockKey(v) === b.key; })) b.rows.forEach(function (r) { keepSet[r] = true; }); });
+      renderBlockList(R, i, blocks);
+    } else {
+      E.bList.textContent = '';
+    }
 
     E.selLabel.textContent = XIO.numToCol(sc);
     E.modeALabel.textContent = XIO.numToCol(sc);
-    if (fc) renderChips(R, i, info, wanted); else E.chips.textContent = '';
+    if (fc && mode !== 'blk') renderChips(R, i, info, wanted); else E.chips.textContent = '';
     // 預覽很大（整份報表），條件沒變就不重畫，打字時才不會卡
-    var sig = JSON.stringify([key, info.lastRow, info.colCount, parsed.cols, fc, mode, op, exc, Object.keys(wanted), terms]);
+    var sig = JSON.stringify([key, info.lastRow, info.colCount, parsed.cols, fc, mode, op, exc, Object.keys(wanted), terms, keepSet && Object.keys(keepSet).length]);
     if (R.previewSig !== sig) {
     R.previewSig = sig;
     var scroller0 = E.preview.querySelector('.sheet-scroll');
@@ -737,7 +771,8 @@
       onToggle: function (c) { toggleColumn(i, c); },
       selectorCol: fc || 1,
       // 「不等於」時就算沒填值也要把空白的列變淡
-      wanted: !fc || mode === 'fz' ? null : (op === 'neq' || values.length ? wanted : null),
+      wanted: !fc || mode === 'fz' || mode === 'blk' ? null : (op === 'neq' || values.length ? wanted : null),
+      keepSet: keepSet,
       wantedOp: op,
       fuzzyTerms: fc && terms && terms.length ? terms : null,
       exclude: exc,
@@ -754,18 +789,22 @@
     }
 
     if (!info.dataRows) { msg('第 ' + sr + ' 列之後沒有資料。請確認上傳的檔案和工作表。', true); return out; }
-    if ((mode === 'col' || mode === 'fz') && !fc) {
-      var fp = XIO.parseColumns((mode === 'fz' ? slot(i).zCol : slot(i).fcol) || '');
+    if ((mode === 'col' || mode === 'fz' || mode === 'blk') && !fc) {
+      var fp = XIO.parseColumns((mode === 'fz' ? slot(i).zCol : mode === 'blk' ? slot(i).bCol : slot(i).fcol) || '');
       var badCol = fp.bad.length > 0 || fp.cols.length > 1;
-      var what = mode === 'fz' ? '模糊比對' : '篩選';
+      var what = mode === 'fz' ? '模糊比對' : mode === 'blk' ? '找 TTL' : '篩選';
       msg(badCol ? what + '的行只能填一個行號（英文字母），例如 D。' : '輸入要' + what + '的行，例如 D。', badCol);
       return out;
+    }
+    if (mode === 'blk') {
+      if (!blocks.length) { msg(colName + ' 行找不到寫著「… TTL」的列，分不出區塊。請確認 TTL 寫在哪一行。', true); return out; }
+      if (!values.length) { msg('勾選要哪幾個區塊（找到 ' + blocks.length + ' 個）。'); return out; }
     }
     if (mode === 'fz' && !values.length) {
       msg('在輸入框填要比對的字（' + colName + ' 行含有這些字的列' + (exc ? '排除' : '選取') + '）。');
       return out;
     }
-    if (!values.length && op === 'eq') { msg('輸入 ' + colName + ' 行要等於的數值。'); return out; }
+    if (!values.length && op === 'eq' && mode !== 'blk') { msg('輸入 ' + colName + ' 行要等於的數值。'); return out; }
     if (parsed.bad.length) {
       msg('看不懂「' + parsed.bad.join('、') + '」。行號請用英文字母，例如 B 或 U:Z。', true);
       return out;
@@ -774,7 +813,13 @@
 
     var matched;
     var blankNote = mode === 'col' ? info.blankCount : 0;   // 那一行空白、不留的列數
-    if (mode === 'fz') {
+    if (mode === 'blk') {
+      matched = Object.keys(keepSet).length;
+      if (!matched) {
+        msg('勾選的區塊在這份報表裡都沒有列（區塊名稱：' + values.join('、') + '）。請重新勾選。', true);
+        return out;
+      }
+    } else if (mode === 'fz') {
       var fz = XIO.fuzzyRows(R.ws, { dataStartRow: sr, selectorCol: fc, lastRow: info.lastRow, values: values, exclude: exc });
       renderFzPreview(E.zPreview, fz, terms, colName, exc);
       matched = fz.rows.length;
@@ -952,6 +997,41 @@
     if (scroller) scroller.scrollLeft = left;
     var btn = E.preview.querySelector('button[data-col="' + c + '"]');
     if (btn) btn.focus({ preventScroll: true });
+  }
+
+  /* ---------- 依區塊（TTL）：列出找到的區塊，勾選要的 ---------- */
+  function renderBlockList(R, i, blocks) {
+    var E = R.els;
+    var box = E.bList;
+    var top = box.querySelector('.rma-items') ? box.querySelector('.rma-items').scrollTop : 0;
+    box.textContent = '';
+    if (!blocks.length) return;
+    var chosen = {};
+    blockNames(i).forEach(function (n) { chosen[XIO.blockKey(n)] = true; });
+    var picked = blocks.filter(function (b) { return chosen[b.key]; });
+    var rows = picked.reduce(function (n, b) { return n + b.rows.length; }, 0);
+    box.appendChild(h('div', { class: 'blank-head' },
+      h('span', { class: 'fz-count', text: '找到 ' + blocks.length + ' 個區塊' }),
+      h('span', { text: '勾了 ' + picked.length + ' 個，共 ' + rows.toLocaleString('en-US') + ' 列' })));
+    var ul = h('ul', { class: 'blank-items fz-items rma-items' });
+    blocks.forEach(function (b, k) {
+      var cb = h('input', { type: 'checkbox', 'aria-label': '要「' + b.name + '」這個區塊' });
+      cb.checked = !!chosen[b.key];
+      cb.addEventListener('change', function () {
+        var list = blockNames(i).filter(function (n) { return XIO.blockKey(n) !== b.key; });
+        if (cb.checked) list.push(b.name);
+        slot(i).bBlocks = list;
+        els.exportNote.textContent = '';
+        recompute();
+      });
+      var range = b.rows.length ? '第 ' + b.rows[0] + '–' + b.rows[b.rows.length - 1] + ' 列' : '沒有列';
+      ul.appendChild(h('li', { class: chosen[b.key] ? null : 'is-off' }, h('label', { class: 'fz-item' },
+        cb,
+        h('span', { class: 'fz-val', text: b.name }),
+        h('span', { class: 'blank-text fz-ctx', text: b.rows.length + ' 列，' + range + (b.ttlRow ? '（TTL 在第 ' + b.ttlRow + ' 列）' : '') }))));
+    });
+    box.appendChild(ul);
+    ul.scrollTop = top;
   }
 
   /* ---------- 模糊比對的輸入框（預設三個，可以再加、可以刪；至少留一個） ---------- */
