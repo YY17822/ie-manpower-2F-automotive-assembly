@@ -99,6 +99,24 @@
     return s;
   }
 
+  /* ---------- 模糊比對（第 1 步第三種選取方式）：儲存格文字含有任一個值就算符合，英文大小寫不分 ---------- */
+  function fuzzyText(v) {
+    v = plainValue(v);
+    if (v === null || v === undefined) return '';
+    if (v instanceof Date) v = v.toISOString().slice(0, 10);
+    return normalizeText(v).toLowerCase();
+  }
+  function fuzzyTerms(values) {
+    return (values || []).map(fuzzyText).filter(function (s) { return s !== ''; });
+  }
+  // 回傳儲存格文字含有的第一個值（已轉小寫）；都沒有回傳 ''
+  function fuzzyHit(v, terms) {
+    var s = fuzzyText(v);
+    if (s === '') return '';
+    for (var i = 0; i < terms.length; i++) if (s.indexOf(terms[i]) >= 0) return terms[i];
+    return '';
+  }
+
   function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
   // 預覽畫面顯示用的文字
@@ -566,6 +584,49 @@
     return out;
   }
 
+  /*
+   * 模糊比對的結果，給畫面預覽用（和 appendFilteredRows() 同一套規則）
+   *   opts  { dataStartRow, selectorCol, lastRow, values, exclude }
+   *   回傳  { rows: [{ row, value: 那一格的文字, text: 這一列前幾格 }], hit: 含有任一值的列數, blank: 那一行空白的列數 }
+   *   rows 是會留下的列：exclude=false 時是含有任一值的列，exclude=true 時是都不含的列。那一行空白的列一律不留。
+   */
+  function fuzzyRows(ws, opts) {
+    var terms = fuzzyTerms(opts.values);
+    var colCount = extent(ws).colCount;
+    var out = { rows: [], hit: 0, blank: 0 };
+    for (var r = opts.dataStartRow; r <= opts.lastRow; r++) {
+      var row = ws.findRow(r);
+      if (!row) continue;
+      var raw = cellRawValue(row.findCell(opts.selectorCol));
+      if (fuzzyText(raw) === '') {
+        var any = false;
+        for (var c0 = 1; c0 <= colCount && !any; c0++) {
+          var v0 = plainValue(cellRawValue(row.findCell(c0)));
+          any = v0 !== null && v0 !== undefined && v0 !== '';
+        }
+        if (any) out.blank++;
+        continue;
+      }
+      var hit = fuzzyHit(raw, terms) !== '';
+      if (hit) out.hit++;
+      if (opts.exclude ? hit : !hit) continue;
+      var pv0 = plainValue(raw);
+      var parts = [];
+      for (var c = 1; c <= colCount && parts.length < 3; c++) {
+        if (c === opts.selectorCol) continue;
+        var pv = plainValue(cellRawValue(row.findCell(c)));
+        var s = pv === null || pv === undefined ? '' : normalizeText(pv instanceof Date ? pv.toISOString().slice(0, 10) : pv);
+        if (s !== '') parts.push(s.length > 30 ? s.slice(0, 30) + '…' : s);
+      }
+      out.rows.push({
+        row: r,
+        value: normalizeText(pv0 instanceof Date ? pv0.toISOString().slice(0, 10) : pv0),
+        text: parts.join('｜')
+      });
+    }
+    return out;
+  }
+
   function filter(ws, opts) {
     var ExcelJS = global.ExcelJS;
     var dataStartRow = opts.dataStartRow;
@@ -688,22 +749,33 @@
    * 把 ws 裡「選取行的值符合」的資料列，依序寫到 ows 的第 outRow 列起。
    * o: { dataStartRow, selectorCol, values, op, keepCols, lastRow }
    *   op  'neq' = 留下選取行「不等於」values 的列；其他（沒給）= 留下「等於」的列
-   *   兩種都一樣：選取行空白的列一律不要
+   *   fuzzy true = 模糊比對：選取行的字含有任一個 values 就算符合（英文大小寫、全形半形不分）；
+   *         exclude=false 留符合的列，exclude=true 留都不符合的列（這時不看 op）
+   *   三種都一樣：選取行空白的列一律不要
    * 回傳 { matched, total, nextRow }（nextRow = 下一個空的列號）
    */
   function appendFilteredRows(ows, outRow, ws, o) {
     var wanted = {};
     o.values.forEach(function (v) { wanted[matchKey(v)] = true; });
     var keepCols = o.keepCols;
+    var fzTerms = o.fuzzy ? fuzzyTerms(o.values) : null;   // 模糊比對（第三種選取方式）
     var matched = 0;
     var total = 0;
     for (var r = o.dataStartRow; r <= o.lastRow; r++) {
       total++;
       var srcRow = ws.findRow(r);
       if (!srcRow) continue;
-      var key = matchKey(cellRawValue(srcRow.findCell(o.selectorCol)));
-      if (key === '') continue;                                  // 選取行空白的列一律不要
-      if (o.op === 'neq' ? !!wanted[key] : !wanted[key]) continue;
+      var raw = cellRawValue(srcRow.findCell(o.selectorCol));
+      if (fzTerms) {
+        // 模糊比對：那一行空白的列一律不要；選取留含有任一值的列，排除留都不含的列
+        if (fuzzyText(raw) === '') continue;
+        var fzHit = fuzzyHit(raw, fzTerms) !== '';
+        if (o.exclude ? fzHit : !fzHit) continue;
+      } else {
+        var key = matchKey(raw);
+        if (key === '') continue;                                // 選取行空白的列一律不要
+        if (o.op === 'neq' ? !!wanted[key] : !wanted[key]) continue;
+      }
       matched++;
       var dstRow = ows.getRow(outRow++);
       if (srcRow.height) dstRow.height = srcRow.height;
@@ -721,8 +793,9 @@
 
   /*
    * 好幾份 MPS 報表篩選後合成一張表。
-   *   parts   [{ ws, values, keepCols, lastRow, selectorCol, op }]，依順序往下接
+   *   parts   [{ ws, values, keepCols, lastRow, selectorCol, op, fuzzy, exclude }]，依順序往下接
    *           selectorCol、op 可省略：每份報表可以用自己的篩選行和「等於／不等於」，沒給就用 common 的、等於
+   *           fuzzy、exclude：這份報表用模糊比對（選取／排除），見 appendFilteredRows()
    *   common  { dataStartRow, selectorCol }（每份報表的版面一樣）
    * 表頭（含合併儲存格、行寬、凍結窗格、列印設定）用第一份報表的；
    * 之後每份報表符合條件的列，直接接在前一份的最後一列下面。
@@ -734,7 +807,8 @@
     function optsOf(p) {
       return {
         dataStartRow: common.dataStartRow, selectorCol: p.selectorCol || common.selectorCol,
-        values: p.values, op: p.op, keepCols: p.keepCols, lastRow: p.lastRow
+        values: p.values, op: p.op, fuzzy: !!p.fuzzy, exclude: !!p.exclude,
+        keepCols: p.keepCols, lastRow: p.lastRow
       };
     }
     var res = filter(parts[0].ws, optsOf(parts[0]));
@@ -2487,7 +2561,7 @@
   }
 
   var ExcelIO = {
-    VERSION: 9,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
+    VERSION: 10,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
     colToNum: colToNum,
     numToCol: numToCol,
     normalizeText: normalizeText,
@@ -2495,6 +2569,10 @@
     formatColumns: formatColumns,
     plainValue: plainValue,
     matchKey: matchKey,
+    fuzzyText: fuzzyText,
+    fuzzyTerms: fuzzyTerms,
+    fuzzyHit: fuzzyHit,
+    fuzzyRows: fuzzyRows,
     displayText: displayText,
     load: load,
     fixFontFlags: fixFontFlags,

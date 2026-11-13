@@ -385,3 +385,28 @@ button.step:hover { background: rgba(11, 110, 105, 0.07); }
 .radio-row label { font-weight: 400; display: inline-flex; align-items: center; gap: 0.375rem; cursor: pointer; }
 .field-name { font-weight: 700; }
 .filter-box { margin-top: 0.625rem; }
+
+/* 第 1 步：模糊比對（和 3F 取像一樣） */
+.check-label { display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 400; cursor: pointer; }
+.check-label input { width: 1.05rem; height: 1.05rem; accent-color: var(--teal); margin: 0; flex: none; }
+.field-row .fz-op label { font-weight: 400; }
+.link-btn { background: none; border: 0; padding: 0; color: var(--teal-ink); font: inherit; font-size: 0.875rem; text-decoration: underline; cursor: pointer; }
+.blank-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.875rem; font-size: 0.875rem; color: var(--ink-2); }
+.blank-items { list-style: none; margin: 0.375rem 0 0; padding: 0.25rem 0; max-height: 15rem; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.blank-items li { font-size: 0.875rem; }
+.blank-row { flex: none; min-width: 4.5rem; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.blank-text { overflow-wrap: anywhere; }
+.blank-more, .blank-none { padding: 0.25rem 0.625rem; font-size: 0.875rem; color: var(--ink-2); }
+.fz-values { display: flex; flex-direction: column; gap: 0.375rem; margin-top: 0.625rem; }
+.fz-value { display: flex; align-items: center; gap: 0.625rem; }
+.fz-label { flex: none; min-width: 2.5rem; font-size: 0.875rem; color: var(--ink-2); }
+.fz-add { width: fit-content; margin-top: 0.5rem; }
+.fz-op { display: inline-flex; align-items: center; gap: 1.25rem; }
+.fz-preview:empty { display: none; }
+.fz-preview { margin-top: 0.25rem; }
+.fz-count { font-weight: 700; color: var(--ink); }
+.fz-item { display: flex; align-items: baseline; gap: 0.75rem; padding: 0.25rem 0.625rem; }
+.fz-val { flex: none; max-width: 45%; overflow-wrap: anywhere; font-weight: 700; }
+.fz-val mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2px; }
+.fz-ctx { color: var(--ink-2); }

@@ -5,6 +5,7 @@
  *   2. 每份報表各自選篩選方式，並輸入「要保留哪些行」：
  *        a. A 行等於多少（原本的方式）
  *        b. 指定某一行，等於或不等於哪些值；這一行空白的列一律不要
+ *        c. 指定某一行，模糊比對（含有某些字）：含有的列選取或排除；這一行空白的列一律不要
  *      兩種方式各報表可以混用
  *      ——各報表保留的行位置可以不同，但保留的行數和順序（相對位置）要一樣
  *   3. 指定 Status 在哪一行（區分量產、試產，後面總表會用到）
@@ -28,6 +29,7 @@
   var STORE_KEY = 'step1';                    // 共用設定的組名（存進 Supabase 的 key 是 step1.xxx）
   var PREVIEW_ROWS = 8;     // 預覽顯示幾列資料
   var MAX_CHIPS = 24;
+  var MAX_FZ_LIST = 300;    // 模糊比對的預覽最多列出幾列
   var STATUS_GUESS = /status|狀態/i;
 
   // reports：每份報表各自的條件，依上傳順序（報表 1、報表 2…），下個月照同樣順序上傳就會自動帶入
@@ -76,19 +78,34 @@
     var n = parseInt(settings.statusPos, 10);
     return n >= 1 ? n : 0;
   }
-  // 篩選方式：'a' = A 行等於（原本的方式，用 values），'col' = 指定行等於／不等於（用 fcol、op、fvalues）
+  // 篩選方式：'a' = A 行等於（原本的方式，用 values），'col' = 指定行等於／不等於（用 fcol、op、fvalues），
+  // 'fz' = 指定行模糊比對（用 zCol、zOp：'eq' 含有的列選取／'ne' 含有的列排除、zValues：各輸入框的值）
   // 舊設定沒有 mode，當作 'a'
-  function modeOf(i) { return slot(i).mode === 'col' ? 'col' : 'a'; }
+  function modeOf(i) { var m = slot(i).mode; return m === 'col' || m === 'fz' ? m : 'a'; }
   function opOf(i) { return modeOf(i) === 'col' && slot(i).op === 'neq' ? 'neq' : 'eq'; }
-  function filterCol(i) {
-    var p = XIO.parseColumns(slot(i).fcol || '');
+  function zExclude(i) { return modeOf(i) === 'fz' && slot(i).zOp === 'ne'; }
+  function oneCol(text) {
+    var p = XIO.parseColumns(text || '');
     return p.cols.length === 1 && !p.bad.length ? p.cols[0] : 0;
   }
-  // 這份報表用哪一行篩選（「指定行」還沒填好時是 0）
-  function colFor(i) { return modeOf(i) === 'col' ? filterCol(i) : selCol(); }
+  function filterCol(i) { return oneCol(slot(i).fcol); }
+  function zColOf(i) { return oneCol(slot(i).zCol); }
+  // 模糊比對各輸入框的值。沒設定過是 3 個空的；讀的時候不寫回設定，免得打開畫面就被當成修改
+  function zVals(i) {
+    var z = slot(i).zValues;
+    return Array.isArray(z) && z.length ? z.map(function (v) { return String(v == null ? '' : v); }) : ['', '', ''];
+  }
+  // 這份報表用哪一行篩選（「指定行」「模糊比對」還沒填好時是 0）
+  function colFor(i) {
+    var m = modeOf(i);
+    return m === 'col' ? filterCol(i) : m === 'fz' ? zColOf(i) : selCol();
+  }
   function valueText(i) { return (modeOf(i) === 'col' ? slot(i).fvalues : slot(i).values) || ''; }
   function setValueText(i, t) { if (modeOf(i) === 'col') slot(i).fvalues = t; else slot(i).values = t; }
   function wantedValues(i) {
+    if (modeOf(i) === 'fz') {
+      return zVals(i).map(function (v) { return XIO.normalizeText(v); }).filter(function (v) { return v !== ''; });
+    }
     return XIO.normalizeText(valueText(i)).split(/[,、;]+/)
       .map(function (v) { return v.trim(); })
       .filter(function (v) { return v !== ''; });
@@ -316,6 +333,7 @@
       slot(i).mode = m;
       E.boxA.hidden = m !== 'a';
       E.boxC.hidden = m !== 'col';
+      E.boxZ.hidden = m !== 'fz';
       R.infoKey = '';
       els.exportNote.textContent = '';
       recompute();
@@ -331,6 +349,42 @@
     E.opNe.addEventListener('change', function () { if (E.opNe.checked) setOp('neq'); });
     E.fcol.addEventListener('input', function () { slot(i).fcol = E.fcol.value; R.infoKey = ''; schedule(); });
     E.fvalues.addEventListener('input', function () { slot(i).fvalues = E.fvalues.value; schedule(); });
+
+    // 「模糊比對」方式的欄位：哪一行、含有的列選取或排除、值的輸入框（預設 3 個，可以加、可以刪）
+    E.modeZ = h('input', { id: pre + 'mode-z', type: 'radio', name: pre + 'mode', value: 'fz' });
+    E.modeZ.checked = mode === 'fz';
+    E.zCol = h('input', {
+      id: pre + 'zcol', type: 'text', class: 'in in-tiny', autocomplete: 'off', spellcheck: 'false',
+      placeholder: '例如 C', value: st.zCol || '', 'aria-label': '要模糊比對的行'
+    });
+    E.zOpSel = h('input', { id: pre + 'zop-eq', type: 'radio', name: pre + 'zop', value: 'eq' });
+    E.zOpExc = h('input', { id: pre + 'zop-ne', type: 'radio', name: pre + 'zop', value: 'ne' });
+    E.zOpSel.checked = st.zOp !== 'ne';
+    E.zOpExc.checked = st.zOp === 'ne';
+    E.zBox = h('div', { class: 'fz-values' });
+    E.zAdd = h('button', { type: 'button', class: 'link-btn fz-add', text: '＋ 再加一個輸入框', onclick: function () { addZInput(i); } });
+    E.zPreview = h('div', { class: 'fz-preview', 'aria-live': 'polite' });
+    E.boxZ = h('div', { class: 'filter-box', hidden: mode !== 'fz' },
+      h('div', { class: 'field-row' },
+        E.zCol, h('span', { text: '行含有下面任一個值的列：' }),
+        h('span', { class: 'fz-op', role: 'radiogroup', 'aria-label': '含有的列要選取還是排除' },
+          h('label', { class: 'check-label', for: pre + 'zop-eq' }, E.zOpSel, h('span', { text: '選取' })),
+          h('label', { class: 'check-label', for: pre + 'zop-ne' }, E.zOpExc, h('span', { text: '排除' })))),
+      E.zBox, E.zAdd,
+      h('p', { class: 'hint', text: '儲存格的字含有任一個值就算符合，英文大小寫、全形半形不分。這一行空白的列一律不留。' }),
+      E.zPreview);
+    buildZInputs(i);
+
+    E.modeZ.addEventListener('change', function () { if (E.modeZ.checked) setMode('fz'); });
+    E.zCol.addEventListener('input', function () { slot(i).zCol = E.zCol.value; R.infoKey = ''; schedule(); });
+    [E.zOpSel, E.zOpExc].forEach(function (r) {
+      r.addEventListener('change', function () {
+        if (!r.checked) return;
+        slot(i).zOp = r.value;
+        els.exportNote.textContent = '';
+        recompute();
+      });
+    });
     E.chips = h('div', { class: 'chips' });
     E.cols = h('input', {
       id: pre + 'cols', type: 'text', class: 'in in-wide', autocomplete: 'off', spellcheck: 'false',
@@ -354,8 +408,9 @@
       h('div', { class: 'field-row radio-row', role: 'radiogroup', 'aria-label': '篩選方式' },
         h('span', { class: 'field-name', text: '篩選方式' }),
         h('label', { for: pre + 'mode-a' }, E.modeA, E.modeALabel, ' 行等於'),
-        h('label', { for: pre + 'mode-c' }, E.modeC, '指定行 等於／不等於')),
-      E.boxA, E.boxC,
+        h('label', { for: pre + 'mode-c' }, E.modeC, '指定行 等於／不等於'),
+        h('label', { for: pre + 'mode-z' }, E.modeZ, '指定某一行，模糊比對（含有某些字）')),
+      E.boxA, E.boxC, E.boxZ,
       E.chips,
       h('div', { class: 'field-row' },
         h('label', { for: pre + 'cols', text: '要保留的行' }), E.cols),
@@ -413,6 +468,7 @@
     var parts = S.reports.map(function (R, i) {
       return {
         ws: R.ws, values: ready[i].values, op: ready[i].op, selectorCol: ready[i].col,
+        fuzzy: ready[i].fuzzy, exclude: ready[i].exclude,
         keepCols: ready[i].cols, lastRow: R.info.lastRow
       };
     });
@@ -473,7 +529,10 @@
     var parsed = keptCols(i);
     var keep = {};
     parsed.cols.forEach(function (c) { keep[c] = true; });
-    var out = { ok: false, values: values, cols: parsed.cols, col: fc, op: op };
+    var exc = zExclude(i);
+    var terms = mode === 'fz' ? XIO.fuzzyTerms(values) : null;
+    var out = { ok: false, values: values, cols: parsed.cols, col: fc, op: op, fuzzy: mode === 'fz', exclude: exc };
+    E.zPreview.textContent = '';
 
     E.selLabel.textContent = XIO.numToCol(sc);
     E.modeALabel.textContent = XIO.numToCol(sc);
@@ -487,8 +546,10 @@
       onToggle: function (c) { toggleColumn(i, c); },
       selectorCol: fc || 1,
       // 「不等於」時就算沒填值也要把空白的列變淡
-      wanted: !fc ? null : (op === 'neq' || values.length ? wanted : null),
+      wanted: !fc || mode === 'fz' ? null : (op === 'neq' || values.length ? wanted : null),
       wantedOp: op,
+      fuzzyTerms: fc && terms && terms.length ? terms : null,
+      exclude: exc,
       caption: '報表 ' + (i + 1) + ' 原始內容（前 ' + PREVIEW_ROWS + ' 列資料）。共 ' + info.dataRows.toLocaleString('en-US') +
         ' 列資料、' + info.colCount + ' 行（到 ' + XIO.numToCol(info.colCount || 1) + ' 行）。'
     });
@@ -499,10 +560,15 @@
     }
 
     if (!info.dataRows) { msg('第 ' + sr + ' 列之後沒有資料。請確認上傳的檔案和工作表。', true); return out; }
-    if (mode === 'col' && !fc) {
-      var fp = XIO.parseColumns(slot(i).fcol || '');
+    if ((mode === 'col' || mode === 'fz') && !fc) {
+      var fp = XIO.parseColumns((mode === 'fz' ? slot(i).zCol : slot(i).fcol) || '');
       var badCol = fp.bad.length > 0 || fp.cols.length > 1;
-      msg(badCol ? '篩選的行只能填一個行號（英文字母），例如 D。' : '輸入要篩選的行，例如 D。', badCol);
+      var what = mode === 'fz' ? '模糊比對' : '篩選';
+      msg(badCol ? what + '的行只能填一個行號（英文字母），例如 D。' : '輸入要' + what + '的行，例如 D。', badCol);
+      return out;
+    }
+    if (mode === 'fz' && !values.length) {
+      msg('在輸入框填要比對的字（' + colName + ' 行含有這些字的列' + (exc ? '排除' : '選取') + '）。');
       return out;
     }
     if (!values.length && op === 'eq') { msg('輸入 ' + colName + ' 行要等於的數值。'); return out; }
@@ -512,27 +578,42 @@
     }
     if (!parsed.cols.length) { msg('輸入要保留的行。'); return out; }
 
-    var hit = 0;                    // 篩選行「等於」輸入值的列數
-    info.values.forEach(function (x) { if (wanted[x.key]) hit += x.count; });
-    var nonBlank = info.dataRows - info.blankCount;
-    var matched = op === 'neq' ? nonBlank - hit : hit;
-    if (!matched && op === 'neq') {
-      msg(nonBlank
-        ? colName + ' 行除了 ' + values.join('、') + ' 之外沒有別的值（空白的列不算），一列都不會留下。'
-        : colName + ' 行從第 ' + sr + ' 列起都是空白，一列都不會留下。', true);
-      return out;
-    }
-    if (!matched) {
-      var seen = info.values.slice(0, 8).map(function (v) { return v.label; }).join('、');
-      msg(colName + ' 行沒有等於 ' + values.join('、') + ' 的列。' +
-        (seen ? '這份報表的 ' + colName + ' 行有：' + seen + '。' : colName + ' 行從第 ' + sr + ' 列起都是空白。'), true);
-      return out;
+    var matched;
+    var blankNote = mode === 'col' ? info.blankCount : 0;   // 那一行空白、不留的列數
+    if (mode === 'fz') {
+      var fz = XIO.fuzzyRows(R.ws, { dataStartRow: sr, selectorCol: fc, lastRow: info.lastRow, values: values, exclude: exc });
+      renderFzPreview(E.zPreview, fz, terms, colName, exc);
+      matched = fz.rows.length;
+      blankNote = fz.blank;
+      if (!matched) {
+        msg(exc
+          ? colName + ' 行每一列都含有 ' + values.join('、') + ' 其中之一（或是空白），一列都不會留下。'
+          : colName + ' 行沒有含有 ' + values.join('、') + ' 的列。', true);
+        return out;
+      }
+    } else {
+      var hit = 0;                    // 篩選行「等於」輸入值的列數
+      info.values.forEach(function (x) { if (wanted[x.key]) hit += x.count; });
+      var nonBlank = info.dataRows - info.blankCount;
+      matched = op === 'neq' ? nonBlank - hit : hit;
+      if (!matched && op === 'neq') {
+        msg(nonBlank
+          ? colName + ' 行除了 ' + values.join('、') + ' 之外沒有別的值（空白的列不算），一列都不會留下。'
+          : colName + ' 行從第 ' + sr + ' 列起都是空白，一列都不會留下。', true);
+        return out;
+      }
+      if (!matched) {
+        var seen = info.values.slice(0, 8).map(function (v) { return v.label; }).join('、');
+        msg(colName + ' 行沒有等於 ' + values.join('、') + ' 的列。' +
+          (seen ? '這份報表的 ' + colName + ' 行有：' + seen + '。' : colName + ' 行從第 ' + sr + ' 列起都是空白。'), true);
+        return out;
+      }
     }
 
     var text = '符合 ' + matched.toLocaleString('en-US') + ' 列（共 ' + info.dataRows.toLocaleString('en-US') +
       ' 列資料），保留 ' + parsed.cols.length + ' 行。';
-    if (mode === 'col' && info.blankCount) {
-      text += ' ' + colName + ' 行空白的 ' + info.blankCount.toLocaleString('en-US') + ' 列不要。';
+    if (blankNote) {
+      text += ' ' + colName + ' 行空白的 ' + blankNote.toLocaleString('en-US') + ' 列不要。';
     }
     var beyond = parsed.cols.filter(function (c) { return c > info.colCount; });
     if (beyond.length) text += ' 注意：' + XIO.formatColumns(beyond) + ' 行在報表裡沒有資料。';
@@ -615,7 +696,8 @@
     if (!info.values.length && !info.blankCount) return;
     var col = XIO.numToCol(colFor(i));
     box.appendChild(h('span', { class: 'chips-label',
-      text: '報表裡 ' + col + ' 行的值' + (opOf(i) === 'neq' ? '（點選的值會被排除）' : '') }));
+      text: '報表裡 ' + col + ' 行的值' +
+        (modeOf(i) === 'fz' ? '（點一下填進輸入框，再點一下清掉）' : opOf(i) === 'neq' ? '（點選的值會被排除）' : '') }));
     info.values.slice(0, MAX_CHIPS).forEach(function (v) {
       var on = !!wanted[v.key];
       box.appendChild(h('button', {
@@ -633,6 +715,23 @@
   }
 
   function toggleValue(i, v) {
+    if (modeOf(i) === 'fz') {
+      // 模糊比對：已經在輸入框裡就清掉，不在就填進第一個空的輸入框（沒有空的就加一個）
+      var zs = zVals(i);
+      var at = -1, empty = -1;
+      zs.forEach(function (x, k) {
+        if (at < 0 && XIO.normalizeText(x) !== '' && XIO.matchKey(x) === v.key) at = k;
+        if (empty < 0 && XIO.normalizeText(x) === '') empty = k;
+      });
+      if (at >= 0) zs[at] = '';
+      else if (empty >= 0) zs[empty] = v.label;
+      else zs.push(v.label);
+      slot(i).zValues = zs;
+      buildZInputs(i);
+      els.exportNote.textContent = '';
+      recompute();
+      return;
+    }
     var list = wantedValues(i);
     var kept = list.filter(function (x) { return XIO.matchKey(x) !== v.key; });
     if (kept.length === list.length) kept.push(v.label);
@@ -659,6 +758,103 @@
     if (scroller) scroller.scrollLeft = left;
     var btn = E.preview.querySelector('button[data-col="' + c + '"]');
     if (btn) btn.focus({ preventScroll: true });
+  }
+
+  /* ---------- 模糊比對的輸入框（預設三個，可以再加、可以刪；至少留一個） ---------- */
+  function buildZInputs(i, focusIndex) {
+    var R = S.reports[i];
+    var E = R.els;
+    E.zBox.textContent = '';
+    var list = zVals(i);
+    var pre = 'f-r' + R.id + '-zval-';
+    list.forEach(function (val, k) {
+      var id = pre + k;
+      var input = h('input', {
+        id: id, type: 'text', class: 'in in-short', autocomplete: 'off', spellcheck: 'false',
+        placeholder: k === 0 ? '例如 Lens' : '', value: val
+      });
+      input.addEventListener('input', function () {
+        var z = zVals(i);
+        z[k] = input.value;
+        slot(i).zValues = z;
+        schedule();
+      });
+      var row = h('div', { class: 'fz-value' },
+        h('label', { class: 'fz-label', for: id, text: '值 ' + (k + 1) }), input);
+      if (list.length > 1) {
+        row.appendChild(h('button', {
+          type: 'button', class: 'link-btn', text: '刪除', 'aria-label': '刪除值 ' + (k + 1),
+          onclick: function () { removeZInput(i, k); }
+        }));
+      }
+      E.zBox.appendChild(row);
+    });
+    if (focusIndex !== undefined) {
+      var el = document.getElementById(pre + focusIndex);
+      if (el) el.focus();
+    }
+  }
+  function addZInput(i) {
+    var z = zVals(i);
+    z.push('');
+    slot(i).zValues = z;
+    buildZInputs(i, z.length - 1);
+    els.exportNote.textContent = '';
+    recompute();
+  }
+  function removeZInput(i, k) {
+    var z = zVals(i);
+    z.splice(k, 1);
+    if (!z.length) z.push('');
+    slot(i).zValues = z;
+    buildZInputs(i, Math.min(k, z.length - 1));
+    els.exportNote.textContent = '';
+    recompute();
+  }
+
+  /* ---------- 模糊比對的預覽：逐列列出會留下的列 ---------- */
+  function renderFzPreview(box, res, terms, colName, exc) {
+    box.textContent = '';
+    var note = exc
+      ? '（' + colName + ' 行含有任一值的 ' + res.hit.toLocaleString('en-US') + ' 列排除；'
+      : '（';
+    note += colName + ' 行空白的 ' + res.blank.toLocaleString('en-US') + ' 列不留）';
+    box.appendChild(h('div', { class: 'blank-head' },
+      h('span', { class: 'fz-count', text: '篩選出來的列：' + res.rows.length.toLocaleString('en-US') + ' 列' }),
+      h('span', { text: note })));
+    if (!res.rows.length) {
+      box.appendChild(h('p', { class: 'blank-none', text: '沒有符合的列。' }));
+      return;
+    }
+    var list = h('ul', { class: 'blank-items fz-items' });
+    res.rows.slice(0, MAX_FZ_LIST).forEach(function (it) {
+      list.appendChild(h('li', { class: 'fz-item' },
+        h('span', { class: 'blank-row', text: '第 ' + it.row + ' 列' }),
+        markText(it.value, terms),
+        h('span', { class: 'blank-text fz-ctx', text: it.text })));
+    });
+    if (res.rows.length > MAX_FZ_LIST) {
+      list.appendChild(h('li', { class: 'blank-more', text: '另有 ' + (res.rows.length - MAX_FZ_LIST).toLocaleString('en-US') + ' 列沒有列出（一樣會留下）' }));
+    }
+    box.appendChild(list);
+  }
+  // 把含有的字用螢光筆標出來
+  function markText(text, terms) {
+    var box = h('span', { class: 'fz-val' });
+    var low = text.toLowerCase();
+    var pos = 0;
+    while (pos < text.length) {
+      var best = -1, len = 0;
+      terms.forEach(function (t) {
+        var j = low.indexOf(t, pos);
+        if (j >= 0 && (best < 0 || j < best || (j === best && t.length > len))) { best = j; len = t.length; }
+      });
+      if (best < 0 || len === 0) { box.appendChild(document.createTextNode(text.slice(pos))); break; }
+      if (best > pos) box.appendChild(document.createTextNode(text.slice(pos, best)));
+      box.appendChild(h('mark', { text: text.slice(best, best + len) }));
+      pos = best + len;
+    }
+    return box;
   }
 
   /* ---------- 匯出 ---------- */
