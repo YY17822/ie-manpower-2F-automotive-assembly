@@ -67,6 +67,10 @@
     if (!Array.isArray(out.reports)) out.reports = [];
     // 只有一份報表的舊版設定（values、cols）當作報表 1
     if (!out.reports.length && (s.values || s.cols)) out.reports.push({ values: s.values || '', cols: s.cols || '' });
+    // 沒有類別的舊資料（以前照上傳位置記的）對不到位置：照順序當作取像、車用、光機系統各一份
+    if (out.reports.length && out.reports.every(function (x) { return x && !x.cat; })) {
+      out.reports = out.reports.slice(0, XIO.MPS_SECTIONS.length).map(function (x, k) { return Object.assign({}, x, { cat: XIO.MPS_SECTIONS[k].key }); });
+    }
     var r = out.rma && typeof out.rma === 'object' ? out.rma : {};
     out.rma = {
       mode: r.mode === 'eq' ? 'eq' : 'fz',
@@ -78,6 +82,7 @@
   }
   function saveSettings() {
     // Status 在新檔的哪一行（英文字母）存在 step1-2-6，和第 2、6 步共用（ui.statusCol）
+    settings.reports = mergedReports();
     var keep = { startRow: settings.startRow, selCol: settings.selCol, reports: settings.reports, statusPos: settings.statusPos, rma: settings.rma };
     try { IEApp.settings.write(STORE_KEY, keep); } catch (e) { /* 存不了就算了 */ }
   }
@@ -89,9 +94,72 @@
     var s = XIO.MPS_SECTIONS.filter(function (x) { return x.key === key; })[0];
     return s ? s.label : '';
   }
+  // 每份報表的條件跟著報表走（R.slot）。記住的時候照「類別 + 同類別的第幾份」記（例如取像的第 1 份），
+  // 和上傳順序無關：下次不管怎麼上傳，被認成取像第 1 份的報表就帶入取像第 1 份的條件。
   function slot(i) {
-    while (settings.reports.length <= i) settings.reports.push({ values: '', cols: '' });
-    return settings.reports[i];
+    var R = S.reports[i];
+    if (!R.slot) R.slot = { values: '', cols: '' };
+    return R.slot;
+  }
+  function slotKey(cat, nth) { return cat + '#' + nth; }
+  function copySlot(s) { return JSON.parse(JSON.stringify(s || { values: '', cols: '' })); }
+  function sameCond(a, b) {
+    var x = Object.assign({}, a), y = Object.assign({}, b);
+    delete x.cat; delete y.cat;
+    return JSON.stringify(x) === JSON.stringify(y);
+  }
+  // 記住的條件 { '類別#第幾份': 條件 }（沒有類別的舊資料不用）
+  function savedMap() {
+    var map = {}, count = {};
+    (settings.reports || []).forEach(function (s) {
+      if (!s || !s.cat) return;
+      count[s.cat] = (count[s.cat] || 0) + 1;
+      map[slotKey(s.cat, count[s.cat])] = s;
+    });
+    return map;
+  }
+  // 要存的條件：記住的 + 目前畫面上有類別的報表（同一個位置以畫面上的為準），依 取像 → 車用 → 光機系統 排
+  function mergedReports() {
+    var map = savedMap();
+    var count = {};
+    S.reports.forEach(function (R, i) {
+      var c = catOf(i);
+      if (!c) return;
+      count[c] = (count[c] || 0) + 1;
+      map[slotKey(c, count[c])] = Object.assign(copySlot(R.slot), { cat: c });
+    });
+    var out = [];
+    XIO.MPS_SECTIONS.forEach(function (sec) {
+      for (var n = 1; map[slotKey(sec.key, n)]; n++) out.push(map[slotKey(sec.key, n)]);
+    });
+    return out;
+  }
+  // 依類別排好順序後，每份報表對到它的位置（類別 + 第幾份），條件屬於位置：
+  // 位置變了就換成那個位置記住的條件（在原本位置改過的條件，已經記在原本的位置，不會不見）。
+  // 只有還沒選類別時輸入的條件，選了類別之後保留下來（存到那個位置）。
+  function assignSlots() {
+    sortReports();
+    var map = savedMap();
+    var count = {};
+    S.reports.forEach(function (R, i) {
+      var c = catOf(i);
+      if (!c) {
+        // 沒有類別：從這裡開始算「這次輸入的條件」
+        if (R.slotKey || R.loaded === undefined) { R.slotKey = ''; R.loaded = copySlot(R.slot); }
+        return;
+      }
+      count[c] = (count[c] || 0) + 1;
+      var key = slotKey(c, count[c]);
+      if (R.slotKey === key) return;
+      var edited = !R.slotKey && R.loaded !== undefined && !sameCond(R.slot, R.loaded);
+      if (!edited) {
+        R.slot = map[key] ? copySlot(map[key]) : { values: '', cols: '' };
+        R.slot.cat = c;
+        R.loaded = copySlot(R.slot);
+      }
+      R.slotKey = key;
+      R.infoKey = '';
+    });
   }
 
   /* ---------- 讀取目前的設定值 ---------- */
@@ -190,7 +258,7 @@
       h('li', { class: 'task' },
         h('h2', { text: '上傳 MPS 報表' }),
         els.drop.el, els.fileList, els.fileMsg,
-        h('p', { class: 'hint', text: '類別依檔名預設：有 TYO 是光機系統、有 TAI 是車用、有 Image 是取像；都沒有的話自己選。報表依類別排順序（取像 → 車用 → 光機系統），依序叫報表 1、報表 2…；同一類有好幾份時照上傳順序。每份報表的條件會記住，下個月同樣的報表會排在同一個位置，自動帶入。' }),
+        h('p', { class: 'hint', text: '類別依檔名預設：有 TYO 是光機系統、有 TAI 是車用、有 Image 是取像；都沒有的話自己選。報表依類別排順序（取像 → 車用 → 光機系統），依序叫報表 1、報表 2…；同一類有好幾份時照上傳順序。每份報表的條件照「類別 + 同類別的第幾份」記住（例如取像的第 1 份），和上傳順序無關，下次自動帶入；還沒選類別的報表，選了類別才帶入。' }),
         h('details', { class: 'advanced' },
           h('summary', { text: '報表版面不一樣時' }),
           h('div', { class: 'field-row' },
@@ -258,10 +326,9 @@
   }
   // 報表依類別排：取像 → 車用 → 光機系統 → 還沒選的；同一類照原本的順序。條件跟著報表一起移
   function sortReports() {
-    S.reports.forEach(function (R, i) { slot(i); });
-    var order = S.reports.map(function (R, i) { return { R: R, s: settings.reports[i], rank: catRank(catOf(i)), i: i }; });
+    var order = S.reports.map(function (R, i) { return { R: R, rank: catRank(catOf(i)), i: i }; });
     order.sort(function (a, b) { return a.rank - b.rank || a.i - b.i; });
-    order.forEach(function (x, i) { S.reports[i] = x.R; settings.reports[i] = x.s; });
+    order.forEach(function (x, i) { S.reports[i] = x.R; });
   }
 
   /* ---------- 開檔 ---------- */
@@ -284,29 +351,28 @@
         els.fileMsg.textContent = '有檔案讀不到。' + errors.join('；');
         els.fileMsg.hidden = false;
       }
-      // 新的檔案先依預設的類別排好再接上去，才會對到上個月同一個位置記住的條件
-      added.sort(function (a, b) { return catRank(a.guess) - catRank(b.guess); });
+      // 新的檔案用檔名預設類別，再依類別排好、對到記住的條件
       added.forEach(function (R) {
+        R.slot = { values: '', cols: '', cat: R.guess || '' };
         S.reports.push(R);
-        if (R.guess) slot(S.reports.length - 1).cat = R.guess;
       });
-      sortReports();
+      assignSlots();
       els.exportNote.textContent = '';
       renderReports();
     });
   }
 
   function removeReport(i) {
-    S.reports.splice(i, 1);
-    settings.reports.splice(i, 1);    // 條件跟著報表走
+    S.reports.splice(i, 1);           // 記住的條件不會刪掉，下次同一個位置的報表還會帶入
+    assignSlots();
     els.exportNote.textContent = '';
     renderReports();
   }
+  // 同一類有好幾份時才能換順序（不同類別一定照 取像 → 車用 → 光機系統）
   function moveUp(i) {
-    if (i < 1) return;
+    if (i < 1 || catOf(i) !== catOf(i - 1)) return;
     var r = S.reports[i]; S.reports[i] = S.reports[i - 1]; S.reports[i - 1] = r;
-    slot(i);
-    var s = settings.reports[i]; settings.reports[i] = settings.reports[i - 1]; settings.reports[i - 1] = s;
+    assignSlots();
     els.exportNote.textContent = '';
     renderReports();
   }
@@ -328,7 +394,7 @@
       if (!cat.value) cat.classList.add('is-empty');
       cat.addEventListener('change', function () {
         slot(i).cat = cat.value;
-        sortReports();                     // 改了類別就重新排順序（取像 → 車用 → 光機系統）
+        assignSlots();                     // 改了類別就重新排順序（取像 → 車用 → 光機系統），對到那個位置記住的條件
         els.exportNote.textContent = '';
         renderReports();
       });
@@ -336,7 +402,7 @@
         h('span', { class: 'report-tag', text: '報表 ' + (i + 1) }),
         cat,
         h('span', { class: 'report-name', text: R.fileName }),
-        i > 0 ? h('button', { type: 'button', class: 'btn-link', text: '往上移', onclick: function () { moveUp(i); } }) : null,
+        i > 0 && catOf(i) && catOf(i) === catOf(i - 1) ? h('button', { type: 'button', class: 'btn-link', text: '往上移', onclick: function () { moveUp(i); } }) : null,
         h('button', { type: 'button', class: 'btn-link', text: '移除', onclick: function () { removeReport(i); } })));
     });
 

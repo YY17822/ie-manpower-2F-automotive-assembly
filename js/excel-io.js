@@ -1248,6 +1248,8 @@
     var lastCol = ext.colCount;
     var targetCol = existing || lastCol + 2;
     var index = o.index || buildIndex(ref, o.refKeyCol);
+    // 工作中心：CT. 右邊那一行（已經有「工作中心」表頭就用那一行）
+    var wcCol = o.refWcCol ? (findHeaderColumn(main, headerEnd, o.wcHeader || WC_HEADER) || targetCol + 1) : 0;
 
     var rows = [];
     var found = 0, missing = 0, blank = 0, errors = 0;
@@ -1272,6 +1274,12 @@
         item.numFmt = first.numFmt;
         item.top = first.top;
         item.bottom = first.bottom;
+        if (o.refWcCol) {
+          var wcCell = ref.findCell(hits[0], o.refWcCol);
+          item.wc = wcCell ? exportValue(wcCell) : null;
+          item.wcText = wcCell ? displayText(wcCell) : '';
+          item.wcFmt = wcCell && wcCell.numFmt ? wcCell.numFmt : null;
+        }
         if (first.error) errors++;
         if (hits.length > 1 && !multiKeys[key]) {
           multiKeys[key] = true;
@@ -1289,6 +1297,7 @@
 
     return {
       targetCol: targetCol,
+      wcCol: wcCol,
       isNew: !existing,
       lastCol: existing ? existing : lastCol,
       lastDataRow: lastDataRow,
@@ -1316,6 +1325,7 @@
    * 參數和 planLookup 一樣，回傳的也是同一份結果。
    */
   var MISSING_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFD9D9' } };
+  var WC_HEADER = '工作中心';          // 第 4 步：CT. 右邊那一行的表頭（P003 的 Work Center）
   function isMissingFill(fill) {
     return !!(fill && fill.fgColor && fill.fgColor.argb === MISSING_FILL.fgColor.argb);
   }
@@ -1372,6 +1382,47 @@
     }
 
     if (plan.isNew) main.getColumn(col).width = 11;
+
+    // 工作中心：P003 的 Work Center 直接貼值（不是公式）；找不到的料號留空白、淺紅色底
+    if (plan.wcCol) {
+      var wc = plan.wcCol;
+      var wcHeader = o.wcHeader || WC_HEADER;
+      if (headerEnd >= 1) {
+        var wtop = headerEnd >= 2 ? 2 : 1;
+        if (!findHeaderColumn(main, headerEnd, wcHeader)) {
+          for (var wr = wtop; wr <= headerEnd; wr++) {
+            var wsrc = main.findCell(wr, o.keyCol);
+            if (wsrc) main.getCell(wr, wc).style = wsrc.style;
+          }
+          if (headerEnd > wtop) main.mergeCellsWithoutStyle(wtop, wc, headerEnd, wc);
+        }
+        var wHead = main.getCell(wtop, wc);
+        (wHead.isMerged ? wHead.master : wHead).value = wcHeader;
+      }
+      var wdone = {};
+      plan.rows.forEach(function (item) {
+        var cell = main.getCell(item.row, wc);
+        var base = main.findCell(item.row, col);
+        var style = Object.assign({}, base ? base.style : {});
+        delete style.fill;
+        wdone[item.row] = true;
+        if (item.refRow) {
+          style.numFmt = item.wcFmt || 'General';
+          cell.style = style;
+          cell.value = item.wc === undefined ? null : item.wc;
+        } else {
+          style.fill = MISSING_FILL;
+          cell.style = style;
+          cell.value = null;
+        }
+      });
+      eachStoredRow(main, function (row, r) {
+        if (r < o.dataStartRow || r > plan.lastDataRow || wdone[r]) return;
+        var old = row.findCell(wc);
+        if (old) old.value = null;
+      });
+      if (!main.getColumn(wc).width || main.getColumn(wc).width < 12) main.getColumn(wc).width = 12;
+    }
 
     // 請 Excel 開檔時重新計算一次公式
     var wb = main.workbook;
@@ -1598,8 +1649,10 @@
    *   counts      各組有幾列料號（陣列，和 groups 同順序）
    *   others      Status 不是任何一組的列 [{ row, label, status }]（不算進量產、試產，只算進 Total）
    */
-  // Status 分組：M 算量產、R 算試產（不分大小寫）。第 2 步（產量匯總）和第 6 步（需求工時匯總）共用。
-  var STATUS_GROUPS = [{ key: 'M', label: '量產' }, { key: 'R', label: '試產' }];
+  // Status 分組（第 2 步產量匯總、第 6 步需求工時匯總都一樣）：R 算試產，其他的（M、別的字、空白）都算量產，
+  // 所以量產 + 試產 = Total（Production）。key 是 '*' 的組 = 「不是其他組」的列
+  var SUMMARY_GROUPS = [{ key: '*', label: '量產' }, { key: 'R', label: '試產' }];
+  var STATUS_GROUPS = SUMMARY_GROUPS;
 
   function statusKey(v) {
     v = plainValue(v);
@@ -1621,7 +1674,8 @@
       var statusCell = o.statusCol ? row.findCell(o.statusCol) : null;
       var sk = statusKey(cellRawValue(statusCell));
       var g = -1;
-      groups.forEach(function (gr, k) { if (g < 0 && sk === statusKey(gr.key)) g = k; });
+      groups.forEach(function (gr, k) { if (g < 0 && gr.key !== '*' && sk === statusKey(gr.key)) g = k; });
+      if (g < 0) groups.forEach(function (gr, k) { if (g < 0 && gr.key === '*') g = k; });   // 其他的都算這一組
       groupOf[r] = g;
       if (g >= 0) counts[g]++;
       else others.push({ row: r, label: displayText(keyCell), status: statusCell ? displayText(statusCell) : '' });
@@ -1737,6 +1791,14 @@
     return list.map(function (x, k) { return 'SUMIF(' + statusList[k] + ',' + crit + ',' + x + ')'; }).join('+');
   }
   function critOf(gr) { return '"' + String(gr.key).replace(/"/g, '""') + '"'; }
+  // 某一組的合計公式。key 是 '*'（其他都算這組）時：只有一個別的組就寫 SUMIF(…,"<>R",…)（空白也算），
+  // 別的組不只一個就寫 SUM(…)-SUMIF(…)-SUMIF(…)
+  function groupSumOf(stat, gr, groups, list) {
+    if (gr.key !== '*') return sumIfOf(stat, critOf(gr), list);
+    var others = groups.filter(function (g) { return g.key !== '*'; });
+    if (others.length === 1) return sumIfOf(stat, '"<>' + String(others[0].key).replace(/"/g, '""') + '"', list);
+    return sumOf(list) + others.map(function (g) { return '-(' + sumIfOf(stat, critOf(g), list) + ')'; }).join('');
+  }
 
   // 匯總表旁邊註明是哪一組（文字標籤左邊那一行，跨匯總表的列合併）。那一行是料號的行時不放。
   function writeGroupNote(main, rows, col, text, keyCol, font) {
@@ -1834,8 +1896,8 @@
     if (!table.ranges.length) return [''].concat(table.groups.map(function () { return ''; }));   // RMA 沒有項目：填 0
     var out = [i === 0 ? sumOf(wip) + '+' + sumOf(month) : sumOf(month)];
     table.groups.forEach(function (gr) {
-      var crit = critOf(gr);
-      out.push(i === 0 ? sumIfOf(stat, crit, wip) + '+' + sumIfOf(stat, crit, month) : sumIfOf(stat, crit, month));
+      out.push(i === 0 ? groupSumOf(stat, gr, table.groups, wip) + '+' + groupSumOf(stat, gr, table.groups, month)
+        : groupSumOf(stat, gr, table.groups, month));
     });
     return out;
   }
@@ -2024,7 +2086,7 @@
     var range = rangeRefs(m.col, table.ranges);
     var stat = rangeRefs(o.statusCol, table.ranges, true);
     return [sumOf(range)].concat(table.groups.map(function (gr) {
-      return sumIfOf(stat, critOf(gr), range);
+      return groupSumOf(stat, gr, table.groups, range);
     }));
   }
 
@@ -2437,9 +2499,13 @@
    *                otRate       加班出勤人數 %（例如 80 代表 80%）
    *                newModels    需求人力 新機種+重工 的新機種 [{ name, qty: [6 個月的人數] }]
    *                reworkPeople 需求人力 新機種+重工 的重工 [6 個月的人數]
-   *                offline      需求人力 Off line 各種人員的人數，順序同 REPORT_OFFLINE（每個月一樣）
+   *                offline      需求人力 Off line 的項目 [{ name, qty }]（每個月一樣；項目可以增減，預設 REPORT_OFFLINE 那四種）
    * o.yoLimit    第二張表（第 32 列起）的 YO 加班上限，預設 78
-   * 回傳 { worksheet, rows: { hoursMass: 9, … }, rows2, monthCol, months }
+   * o.manpower   「人力」工作表（第 7 步匯入的）：整張貼進總表的 O 行起（MANPOWER_COL），
+   *              o.links 裡指到它的格子會改成指到總表裡的位置
+   * o.dropManpower  true = 貼完之後把「人力」工作表拿掉（匯出時用；畫面預覽時不拿掉，才能重做）
+   * 總表排在第一個工作表，打開檔案時顯示總表。
+   * 回傳 { worksheet, rows: { hoursMass: 9, … }, rows2, monthCol, months, manpower: { firstCol, lastCol, lastRow } }
    */
   function addReportSheet(wb, o) {
     o = o || {};
@@ -2447,6 +2513,10 @@
       .filter(function (w) { return sameSheetName(w.name, REPORT_SHEET); })
       .forEach(function (w) { wb.removeWorksheet(w.id); });
     var ws = wb.addWorksheet(REPORT_SHEET);
+    // 總表排第一個、打開檔案時顯示總表
+    ws.orderNo = -1;
+    wb.worksheets.forEach(function (w, k) { w.orderNo = k; if (w.views && w.views[0]) delete w.views[0].tabSelected; });
+    wb.views = [{ x: 0, y: 0, width: 20000, height: 12000, firstSheet: 0, activeTab: 0, visibility: 'visible' }];
     var R = REPORT;
     var C = REPORT_COLOR;
     var lastMonth = R.monthCol + R.months - 1;
@@ -2631,8 +2701,23 @@
       }
     }
 
-    // 從其他工作表抓的列（MPS、人力）
+    // 「人力」貼進總表的 O 行起；指到「人力」的格子改成指到總表裡的位置
+    var mpInfo = null;
     var links = o.links || {};
+    if (o.manpower && !sameSheetName(o.manpower.name, REPORT_SHEET)) {
+      mpInfo = placeManpower(ws, o.manpower, MANPOWER_COL);
+      var off = MANPOWER_COL - 1;
+      var moved = {};
+      Object.keys(links).forEach(function (key) {
+        moved[key] = (links[key] || []).map(function (ref) {
+          return ref && sameSheetName(ref.sheet, o.manpower.name) ? Object.assign({}, ref, { sheet: REPORT_SHEET, col: ref.col + off }) : ref;
+        });
+      });
+      links = moved;
+      if (o.dropManpower) wb.removeWorksheet(o.manpower.id);
+    }
+
+    // 從其他工作表抓的列（MPS；人力已經在總表裡）
     Object.keys(links).forEach(function (key) {
       if (!rows[key]) return;
       (links[key] || []).slice(0, R.months).forEach(function (ref, i) {
@@ -2691,13 +2776,15 @@
       setNote(rows, 'needNewRework', '各月人數 = ' + names.concat(['重工']).join(' + '));
     }
 
-    // 需求人力 Off line：各種人員的人數相加（每個月一樣），例如 =1+2+1+3；備註寫各種人數
-    var offCounts = inp.offline || [];
-    if (offCounts.some(isNum)) {
-      var offNums = REPORT_OFFLINE.map(function (c, k) { return isNum(offCounts[k]) ? offCounts[k] : 0; });
-      var offTotal = offNums.reduce(function (x, y) { return x + y; }, 0);
-      for (m = 0; m < R.months; m++) setFormula(cellOf(rows, 'needOffline', m), offNums.join('+'), offTotal, 'General');
-      setNote(rows, 'needOffline', REPORT_OFFLINE.map(function (c, k) { return c + ' ' + offNums[k]; }).join('、'));
+    // 需求人力 Off line：各項目的人數相加（每個月一樣），例如 =1+2+1+3；備註寫各項目的人數
+    // 舊的格式是只有人數的陣列（順序同 REPORT_OFFLINE）
+    var offItems = (inp.offline || []).map(function (it, k) {
+      return it && typeof it === 'object' ? { name: String(it.name || ''), qty: it.qty } : { name: REPORT_OFFLINE[k] || '', qty: it };
+    }).filter(function (it) { return isNum(it.qty); });
+    if (offItems.length) {
+      var offTotal = offItems.reduce(function (x, it) { return x + it.qty; }, 0);
+      for (m = 0; m < R.months; m++) setFormula(cellOf(rows, 'needOffline', m), offItems.map(function (it) { return it.qty; }).join('+'), offTotal, 'General');
+      setNote(rows, 'needOffline', offItems.map(function (it, k) { return (it.name || '項目' + (k + 1)) + ' ' + it.qty; }).join('、'));
     }
 
     fillComputed(rows, OVERTIME_LIMIT);
@@ -2727,7 +2814,44 @@
     fillComputed(rows2, yoLimit);
 
     wb.calcProperties = Object.assign({}, wb.calcProperties, { fullCalcOnLoad: true });
-    return { worksheet: ws, rows: rows, rows2: rows2, monthCol: R.monthCol, months: R.months, yoLimit: yoLimit };
+    return { worksheet: ws, rows: rows, rows2: rows2, monthCol: R.monthCol, months: R.months, yoLimit: yoLimit, manpower: mpInfo };
+  }
+
+  // 「人力」放進總表的哪一行開始（O 行）
+  var MANPOWER_COL = 15;
+
+  /*
+   * 把人力報表整張貼進總表，從 firstCol 那一行開始（列號不變）：
+   * 值（公式換成數值）、格式、合併儲存格、行寬照抄；列高取兩邊比較高的（同一列總表也在用）。
+   * 回傳 { firstCol, lastCol, lastRow }
+   */
+  function placeManpower(ws, src, firstCol) {
+    var off = firstCol - 1;
+    var ext = extent(src);
+    var maxCol = ext.colCount;
+    eachStoredRow(src, function (row, r) {
+      eachStoredCell(row, function (cell, c) {
+        var ncell = ws.getCell(r, c + off);
+        ncell.style = cell.style;
+        if (c > maxCol) maxCol = c;
+        if (cell.isMerged && cell.master !== cell) return;
+        var v = exportValue(cell);
+        if (v !== null && v !== '') ncell.value = v;
+      });
+      if (row.height) {
+        var nrow = ws.getRow(r);
+        if (!nrow.height || nrow.height < row.height) nrow.height = row.height;
+      }
+    });
+    for (var c = 1; c <= maxCol; c++) {
+      var col = src.getColumn(c);
+      if (col.width) ws.getColumn(c + off).width = col.width;
+      if (col.hidden) ws.getColumn(c + off).hidden = true;
+    }
+    listMerges(src).forEach(function (m) {
+      ws.mergeCellsWithoutStyle(m.top, m.left + off, m.bottom, m.right + off);
+    });
+    return { firstCol: firstCol, lastCol: maxCol + off, lastRow: ext.lastRow };
   }
 
   function sameSheetName(a, b) { return String(a).toLowerCase() === String(b).toLowerCase(); }
@@ -2741,7 +2865,7 @@
   }
 
   var ExcelIO = {
-    VERSION: 14,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
+    VERSION: 18,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
     colToNum: colToNum,
     numToCol: numToCol,
     normalizeText: normalizeText,
@@ -2776,6 +2900,7 @@
     lookupFormula: lookupFormula,
     addLookupColumn: addLookupColumn,
     findHeaderColumn: findHeaderColumn,
+    WC_HEADER: WC_HEADER,
     planDemand: planDemand,
     addDemandColumns: addDemandColumns,
     planMpsTotals: planMpsTotals,
@@ -2785,6 +2910,7 @@
     addSummaryRows: addSummaryRows,
     summaryFormulas: summaryFormulas,
     STATUS_GROUPS: STATUS_GROUPS,
+    SUMMARY_GROUPS: SUMMARY_GROUPS,
     MANPOWER_ITEMS: MANPOWER_ITEMS,
     manpowerRows: manpowerRows,
     guessManpowerRows: guessManpowerRows,
@@ -2799,6 +2925,7 @@
     REPORT_TITLE_DEFAULT: REPORT_TITLE_DEFAULT,
     OFFLINE_RATE: OFFLINE_RATE,
     REPORT_OFFLINE: REPORT_OFFLINE,
+    MANPOWER_COL: MANPOWER_COL,
     YO_LIMIT_DEFAULT: YO_LIMIT_DEFAULT,
     REPORT_SECOND_OFFSET: REPORT_SECOND_OFFSET,
     findReportLinks: findReportLinks,

@@ -111,8 +111,13 @@
     if (!out.newModels.length) out.newModels.push({ name: '', qty: blank6('') });
     out.reworkPeople = strings6(s.reworkPeople);
     // 需求人力 Off line：各種人員的人數（每個月一樣）
+    // 需求人力 Off line：項目 + 人數（每個月一樣，項目可以增減）。舊的設定只有人數（順序同 REPORT_OFFLINE）
     var off = Array.isArray(s.offline) ? s.offline : [];
-    out.offline = XIO.REPORT_OFFLINE.map(function (c, k) { return off[k] === undefined || off[k] === null ? '' : String(off[k]); });
+    out.offline = off.map(function (it, k) {
+      if (it && typeof it === 'object') return { name: String(it.name || ''), qty: it.qty === undefined || it.qty === null ? '' : String(it.qty) };
+      return { name: XIO.REPORT_OFFLINE[k] || '', qty: it === undefined || it === null ? '' : String(it) };
+    });
+    if (!out.offline.length) out.offline = XIO.REPORT_OFFLINE.map(function (c) { return { name: c, qty: '' }; });
     REMEMBERED.forEach(function (row) {
       var saved = Array.isArray(s[row.key]) ? s[row.key].slice(0, MONTHS) : [];
       while (saved.length < MONTHS) saved.push(row.def);
@@ -157,7 +162,10 @@
         }) };
       });
       out.reworkPeople = i.reworkPeople.map(function (v, m) { return num(v, monthName(m) + '的重工人數'); });
-      out.offline = XIO.REPORT_OFFLINE.map(function (c, k) { return num(i.offline[k], '需求人力 Off line 的' + c + '人數'); });
+      out.offline = i.offline.map(function (it, k) {
+        var name = String(it.name || '').trim();
+        return { name: name, qty: num(it.qty, '需求人力 Off line 的「' + (name || '第 ' + (k + 1) + ' 個項目') + '」人數') };
+      });
       if (out.yoLimit === null) throw new Error('請輸入 YO 加班上限（小時）。');
     } catch (e) {
       return { error: e.message };
@@ -175,7 +183,10 @@
     out.newModels.forEach(function (md, k) {
       if (!md.name && md.qty.some(function (v) { return v !== null; })) blanks.push('第 ' + (k + 1) + ' 個新機種有人數但沒有名稱，備註會寫成「新機種' + (k + 1) + '」。');
     });
-    if (!out.offline.some(function (v) { return v !== null; })) blanks.push('需求人力「Off line」還沒輸入人數，這一列先留空白。');
+    if (!out.offline.some(function (it) { return it.qty !== null; })) blanks.push('需求人力「Off line」還沒輸入人數，這一列先留空白。');
+    out.offline.forEach(function (it, k) {
+      if (!it.name && it.qty !== null) blanks.push('需求人力「Off line」第 ' + (k + 1) + ' 個項目有人數但沒有名稱，備註會寫成「項目' + (k + 1) + '」。');
+    });
     if (missWd) blanks.push('平日工作天數沒填的月份，需求人力會是 #DIV/0!。');
     out.title = String(i.title || '').trim() || XIO.REPORT_TITLE_DEFAULT;
     return { values: out, blanks: blanks };
@@ -315,10 +326,22 @@
     els.preview = h('div', { class: 'sheet-area' });
     els.exportBtn = h('button', { type: 'button', class: 'btn-primary', disabled: true, text: '匯出 Excel', onclick: onExport });
     els.exportNote = h('span', { class: 'export-note', 'aria-live': 'polite' });
+    // 匯出的檔名（預設 YYMM_製二課 人力需求預估，可以自己改；改過就不再自動換）
+    els.fileName = h('input', { id: 'f9-filename', type: 'text', class: 'in in-wide file-name', autocomplete: 'off', spellcheck: 'false',
+      value: S.fileNameEdited ? S.fileName : '' });
+    els.fileName.addEventListener('input', function () {
+      S.fileNameEdited = XIO.normalizeText(els.fileName.value) !== '';
+      S.fileName = els.fileName.value;
+      if (IEApp.state.withReport) IEApp.state.withReport.outName = currentFileName();
+      els.exportNote.textContent = '';
+    });
+    els.fileNameReset = h('button', { type: 'button', class: 'btn-link', text: '用預設檔名',
+      onclick: function () { S.fileNameEdited = false; S.fileName = ''; els.fileName.value = defaultFileName();
+        if (IEApp.state.withReport) IEApp.state.withReport.outName = currentFileName(); } });
 
     panel.appendChild(h('div', { class: 'step-head' },
       h('h1', { text: '總表' }),
-      h('p', { text: '在同一個檔案裡新增「總表」工作表，用公式從 MPS、人力工作表抓量產／試產／RMA 的產量、需求工時和現有人力，加上畫面上輸入的天數、工時、效率和出勤率，算出需求人力、人力差異和 Loading Rate。' })));
+      h('p', { text: '在同一個檔案裡新增「總表」工作表（排第一個），用公式從 MPS 抓量產／試產／RMA 的產量、需求工時，人力報表併進總表的 O 行起並抓現有人力，加上畫面上輸入的天數、工時、效率和出勤率，算出需求人力、人力差異和 Loading Rate。' })));
 
     panel.appendChild(h('ol', { class: 'tasks' },
       h('li', { class: 'task' },
@@ -333,7 +356,9 @@
       h('li', { class: 'task' },
         h('h2', { text: '總表' }),
         els.summary, els.notes, els.result, els.preview,
-        h('div', { class: 'actions' }, els.exportBtn, els.exportNote))));
+        h('div', { class: 'actions' }, els.exportBtn,
+          h('label', { for: 'f9-filename', class: 'file-name-label', text: '檔名' }), els.fileName, h('span', { text: '.xlsx' }), els.fileNameReset),
+        h('p', { class: 'export-row' }, els.exportNote))));
 
     refresh();
   }
@@ -414,16 +439,26 @@
       h('button', { type: 'button', class: 'btn-link', text: '＋ 新增機種',
         onclick: function () { inp.newModels.push({ name: '', qty: blank6('') }); rebuildEntry(); } })));
 
-    // 需求人力 Off line：各種人員的人數（每個月一樣）
-    var offRow = h('div', { class: 'field-row entry-ot' }, h('span', { class: 'field-label', text: '需求人力「Off line」（每個月一樣）：' }));
-    XIO.REPORT_OFFLINE.forEach(function (cat, k) {
-      var id = 'f9-off-' + k;
-      var el = input(inp.offline[k], '需求人力 Off line ' + cat + ' 人數', function (v) { inp.offline[k] = v; }, 'in-tiny');
-      el.id = id;
-      offRow.appendChild(h('label', { for: id, class: 'entry-cat', text: cat }));
-      offRow.appendChild(el);
+    // 需求人力 Off line：項目和人數（每個月一樣；可以新增、刪除項目）
+    var obody = h('tbody');
+    inp.offline.forEach(function (it, k) {
+      var nameEl = h('input', { type: 'text', class: 'in entry-name', autocomplete: 'off', value: it.name,
+        placeholder: '項目名稱', 'aria-label': '需求人力 Off line 第 ' + (k + 1) + ' 個項目名稱' });
+      nameEl.addEventListener('input', function () { it.name = nameEl.value; onType(); });
+      obody.appendChild(h('tr', null,
+        h('th', { scope: 'row' }, nameEl),
+        h('td', null, input(it.qty, '需求人力 Off line ' + (it.name || '第 ' + (k + 1) + ' 個項目') + ' 人數', function (v) { it.qty = v; })),
+        h('td', null, h('button', { type: 'button', class: 'btn-link', text: '刪除',
+          onclick: function () { inp.offline.splice(k, 1); if (!inp.offline.length) inp.offline.push({ name: '', qty: '' }); rebuildEntry(); } }))));
     });
-    els.entry.appendChild(offRow);
+    els.entry.appendChild(h('h3', { class: 'entry-title', text: '需求人力「Off line」（每個月一樣，人）' }));
+    els.entry.appendChild(h('div', { class: 'entry-scroll' },
+      h('table', { class: 'entry' },
+        h('thead', null, h('tr', null, h('th', { scope: 'col', text: '項目' }), h('th', { scope: 'col', text: '人數' }), h('th', { scope: 'col' }))),
+        obody)));
+    els.entry.appendChild(h('div', { class: 'link-row' },
+      h('button', { type: 'button', class: 'btn-link', text: '＋ 新增項目',
+        onclick: function () { inp.offline.push({ name: '', qty: '' }); rebuildEntry(); } })));
 
     // 第二張表：YO 加班上限
     els.entry.appendChild(h('div', { class: 'field-row entry-ot' },
@@ -539,12 +574,15 @@
     if (read.error) { setSummary(read.error, true); return; }
     // 每次都照目前的輸入重新產生總表（給預覽用）
     work.report = XIO.addReportSheet(work.wb, { title: read.values.title, monthRefs: work.refs || [], links: linkRefs(work.links),
-      inputs: read.values, yoLimit: read.values.yoLimit });
+      inputs: read.values, yoLimit: read.values.yoLimit, manpower: manpowerSheet(work.wb) });
     var ws = work.report.worksheet;
-    var names = work.wb.worksheets.map(function (w) { return w.name; });
+    // 匯出時「人力」會併進總表，不另外留一個工作表
+    var names = work.wb.worksheets.map(function (w) { return w.name; }).filter(function (n) { return !(work.report.manpower && sameName(n, MP_SHEET)); });
     var replacing = src.kind === 'file' && S.upload.sheets.some(function (n) { return sameName(n, SHEET_NAME); });
-    var text = '匯出的檔案有 ' + names.length + ' 個工作表：' + names.join('、') + '。「' + SHEET_NAME +
-      '」有兩張表：上面是法定加班上限 46hr，下面（第 ' + (XIO.REPORT.noteRow + XIO.REPORT_SECOND_OFFSET) + ' 列起）是 YO 加班上限 ' + read.values.yoLimit + 'hr。';
+    var text = '匯出的檔案有 ' + names.length + ' 個工作表：' + names.join('、') + '（總表排第一個，打開檔案時顯示總表）。「' + SHEET_NAME +
+      '」有兩張表：上面是法定加班上限 46hr，下面（第 ' + (XIO.REPORT.noteRow + XIO.REPORT_SECOND_OFFSET) + ' 列起）是 YO 加班上限 ' + read.values.yoLimit + 'hr。' +
+      (work.report.manpower ? '人力報表放在總表的 ' + XIO.numToCol(work.report.manpower.firstCol) + ' 行起（' +
+        XIO.numToCol(work.report.manpower.firstCol) + ' 到 ' + XIO.numToCol(work.report.manpower.lastCol) + ' 行）。' : '');
     if (replacing) text += ' 檔案裡原本的「' + SHEET_NAME + '」工作表會重新建立。';
     setSummary(text, false, replacing);
 
@@ -573,8 +611,9 @@
     var refs = work.refs || [];
     var links = linkRefs(work.links);
     var inputs = read.values;
+    if (!S.fileNameEdited) els.fileName.value = defaultFileName();
     IEApp.state.withReport = {
-      outName: outputName(src),
+      outName: currentFileName(),
       mainSheet: work.main.name,
       reportSheet: SHEET_NAME,
       reportRows: work.report.rows,
@@ -675,15 +714,43 @@
   /* ---------- 產生活頁簿 ---------- */
   function buildWorkbook(src, refs, links, inputs) {
     return buildFrom(src).then(function (wb) {
-      XIO.addReportSheet(wb, { title: inputs.title, monthRefs: refs, links: links, inputs: inputs, yoLimit: inputs.yoLimit });
+      XIO.addReportSheet(wb, { title: inputs.title, monthRefs: refs, links: links, inputs: inputs, yoLimit: inputs.yoLimit,
+        manpower: manpowerSheet(wb), dropManpower: true });
       return wb;
     });
   }
 
-  function outputName(src) {
-    var stem = src.name.replace(/\.[^.]+$/, '');
-    if (stem.slice(-SUFFIX.length) === SUFFIX) stem = stem.slice(0, -SUFFIX.length);
-    return stem + SUFFIX + '.xlsx';
+  function manpowerSheet(wb) {
+    return wb.worksheets.filter(function (w) { return sameName(w.name, MP_SHEET); })[0] || null;
+  }
+
+  /* ---------- 匯出的檔名：YYMM_製二課 人力需求預估（YY = 年份後兩碼、MM = 首月），可以自己改 ---------- */
+  var FILE_TITLE = '製二課 人力需求預估';
+  var MONTH_KEYS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  // 首月：第 5 步輸入的月份表頭（Nov.、Nov、11月 都看得懂）；看不懂就用這個月
+  function firstMonth() {
+    var t = S.work && S.work.refs && S.work.refs[0] ? XIO.normalizeText(S.work.refs[0].text || '').toLowerCase() : '';
+    var k = MONTH_KEYS.indexOf(t.slice(0, 3));
+    if (k >= 0) return k + 1;
+    var m = /(\d{1,2})\s*月/.exec(t) || /^(\d{1,2})$/.exec(t);
+    var n = m ? parseInt(m[1], 10) : 0;
+    return n >= 1 && n <= 12 ? n : new Date().getMonth() + 1;
+  }
+  // 年份：離今天最近的那一個（例如 12 月做隔年 1 月的，年份是隔年）
+  function defaultFileName() {
+    var now = new Date();
+    var month = firstMonth();
+    var cur = now.getFullYear() * 12 + now.getMonth();
+    var year = now.getFullYear();
+    [-1, 1].forEach(function (d) {
+      var y = now.getFullYear() + d;
+      if (Math.abs(y * 12 + month - 1 - cur) < Math.abs(year * 12 + month - 1 - cur)) year = y;
+    });
+    return String(year % 100).padStart(2, '0') + String(month).padStart(2, '0') + '_' + FILE_TITLE;
+  }
+  function currentFileName() {
+    var name = XIO.normalizeText(els.fileName ? els.fileName.value : '').replace(/\.xlsx$/i, '').replace(/[\\/:*?"<>|]/g, '_');
+    return (name || defaultFileName()) + '.xlsx';
   }
 
   /* ---------- 匯出 ---------- */
@@ -692,11 +759,12 @@
     if (!ready) return;
     els.exportBtn.disabled = true;
     els.exportNote.textContent = '產生檔案中…';
+    var name = currentFileName();
     ready.build()
       .then(function (wb) { return XIO.toBlob(wb); })
       .then(function (blob) {
-        ui.download(blob, ready.outName);
-        els.exportNote.textContent = '已匯出 ' + ready.outName + '，在瀏覽器的下載資料夾。';
+        ui.download(blob, name);
+        els.exportNote.textContent = '已匯出 ' + name + '，在瀏覽器的下載資料夾。';
       })
       .catch(function (err) {
         els.exportNote.textContent = '匯出失敗：' + (err && err.message ? err.message : err);

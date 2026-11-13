@@ -7,13 +7,13 @@
  *   （舊版沒有類別標題的檔案：整塊資料一張，最後一列資料之後空一列。）
  *   以 Status 在 C 行、需求工時在 N 行、資料在第 5 到 74 列為例：
  *
- *     Production 總需求工時   =SUM(N5:N74)                     每月所有料號加總
- *     量產總需求工時          =SUMIF($C$5:$C$74,"M",N5:N74)    Status 是 M 的料號
- *     試產總需求工時          =SUMIF($C$5:$C$74,"R",N5:N74)    Status 是 R 的料號
+ *     Production 總需求工時   =SUM(N5:N74)                      每月所有料號加總
+ *     量產總需求工時          =SUMIF($C$5:$C$74,"<>R",N5:N74)   Status 不是 R 的料號（包括空白）
+ *     試產總需求工時          =SUMIF($C$5:$C$74,"R",N5:N74)     Status 是 R 的料號
+ *   所以量產 + 試產 = Production。
  *
  *   這三列連同左邊的文字標籤圍成一塊：外框粗線、裡面細格線，標籤置中。
  *   Production 那一列是淺藍色底（#A2D2FF）。不再用顏色標示前三大。
- *   Status 不是 M 也不是 R 的列只算進 Production，畫面上會列出來提醒。
  *
  *   Status 在哪一行：和第 1 步、第 2 步共用同一個設定。
  *
@@ -36,7 +36,7 @@
   var REF_SHEET = 'P003';
   var TITLE = '需求工時';
   var SUFFIX = '_工時匯總';
-  var GROUPS = XIO.STATUS_GROUPS;     // M = 量產、R = 試產（和第 2 步共用）
+  var GROUPS = XIO.SUMMARY_GROUPS;    // R = 試產，其他的（包括空白）都算量產；量產 + 試產 = Production
   var LABELS = { total: 'Production 總需求工時', groups: GROUPS.map(function (g) { return g.label + '總需求工時'; }), rma: 'RMA總需求工時' };
   var STATUS_GUESS = /status|狀態/i;
 
@@ -145,7 +145,7 @@
 
     panel.appendChild(h('div', { class: 'step-head' },
       h('h1', { text: '需求工時匯總' }),
-      h('p', { text: '在需求工時下面加上每個月正常生產的總需求工時（Production），再用 Status 分成量產（M）和試產（R）的合計。和第 2 步一樣，取像＋車用一張、光機系統一張，放在同一列。每格都是公式。' })));
+      h('p', { text: '在需求工時下面加上每個月正常生產的總需求工時（Production），再用 Status 分成量產（R 以外的都算）和試產（R）的合計，量產 + 試產 = Production。和第 2 步一樣，取像＋車用一張、光機系統一張，放在同一列。每格都是公式。' })));
 
     panel.appendChild(h('ol', { class: 'tasks' },
       h('li', { class: 'task' },
@@ -314,11 +314,12 @@
     }
 
     GROUPS.forEach(function (gr, k) {
-      if (!plan.counts[k]) {
+      if (!plan.counts[k] && gr.key !== '*') {
         els.notes.appendChild(h('li', { class: 'is-warn' },
           XIO.numToCol(statusCol) + ' 行沒有「' + gr.key + '」的列，' + gr.label + '每個月都會是 0。請確認 Status 選對行。'));
       }
     });
+    els.notes.appendChild(h('li', null, 'Status 是 R 的算試產，其他的（包括空白）都算量產，所以量產 + 試產 = Production。'));
     if (plan.others.length) {
       els.notes.appendChild(h('li', { class: 'is-warn' },
         '有 ' + plan.others.length + ' 列的 Status 不是 M 也不是 R，只會算進 Production，不算進量產、試產。清單在下面。'));
@@ -365,7 +366,7 @@
 
     var items = [{ label: plan.isRma ? LABELS.rma : LABELS.total, row: plan.totalRow, value: function (m) { return m.total; } }];
     plan.groups.forEach(function (gr, k) {          // RMA 那張只有 RMA總需求工時一列
-      items.push({ label: LABELS.groups[k] + '（' + gr.key + '，' + plan.counts[k] + ' 列）', row: plan.groupRows[k],
+      items.push({ label: LABELS.groups[k] + '（' + (gr.key === '*' ? GROUPS.filter(function (g) { return g.key !== '*'; }).map(function (g) { return g.key; }).join('、') + ' 以外' : gr.key) + '，' + plan.counts[k] + ' 列）', row: plan.groupRows[k],
         value: function (m) { return m.groups[k]; } });
     });
 

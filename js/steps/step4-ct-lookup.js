@@ -7,6 +7,7 @@
  *   填入的是公式（例如 ='P003'!M5/'P003'!K5），之後在 Excel 點儲存格就能看到數值是從 P003 哪兩格算出來的。
  *   同一個料號在 P003 出現很多列時，取最上面那一列（和 VLOOKUP 一樣）。
  *   找不到的料號留空白，並標上淺紅色底。
+ *   CT. 右邊再加一行「工作中心」：P003 同一列的 Work Center 直接貼值（不是公式）。不想帶入可以選「不帶入工作中心」。
  *
  *   來源有兩種：
  *     a. 剛才第 3 步做好的結果（不用先匯出，直接沿用）
@@ -31,8 +32,10 @@
   var NOT_KEY = /desc|說明|品名/i;
   var LABOR_HINT = /labor|人工|工時/i;                      // 猜哪一行是 Labor
   var BASE_HINT = /base\s*qty|base\s*quantity|基準|基本數量/i;  // 猜哪一行是 Base Qty
+  var WC_HINT = /work\s*center|工作中心/i;                 // 猜哪一行是 Work Center
 
-  var DEFAULTS = { keyCol: '', refKeyCol: '', refValueCol: '', refDivCol: '', startRow: '' };
+  // refWcCol：P003 的 Work Center 在哪一行（貼到 CT. 右邊的「工作中心」）；'-' = 不帶入
+  var DEFAULTS = { keyCol: '', refKeyCol: '', refValueCol: '', refDivCol: '', refWcCol: '', startRow: '' };
 
   // 這一步的狀態（切到別的步驟再回來時還在）
   var S = {
@@ -126,6 +129,7 @@
     els.refKeyCol = h('select', { id: 'f3-refkey', class: 'in-select' });
     els.refValueCol = h('select', { id: 'f3-refval', class: 'in-select' });
     els.refDivCol = h('select', { id: 'f3-refdiv', class: 'in-select' });
+    els.refWcCol = h('select', { id: 'f3-refwc', class: 'in-select' });
     els.refPreview = h('div', { class: 'sheet-area' });
 
     els.summary = h('p', { class: 'summary', 'aria-live': 'polite' });
@@ -158,12 +162,13 @@
           h('div', { class: 'field-row' },
             h('label', { for: 'f3-start', text: 'MPS 的資料從第' }), els.startRow, els.startNote))),
       h('li', { class: 'task' },
-        h('h2', { text: 'P003 的料號、Labor、Base Qty' }),
+        h('h2', { text: 'P003 的料號、Labor、Base Qty、Work Center' }),
         h('div', { class: 'field-grid' },
           h('label', { for: 'f3-refkey', text: '料號在' }), els.refKeyCol,
           h('label', { for: 'f3-refval', text: 'Labor 在' }), els.refValueCol,
-          h('label', { for: 'f3-refdiv', text: 'Base Qty 在' }), els.refDivCol),
-        h('p', { class: 'hint', text: 'CT. = Labor ÷ Base Qty。P003 的 Labor 是做 Base Qty 個的工時，除過之後才是單件工時。' }),
+          h('label', { for: 'f3-refdiv', text: 'Base Qty 在' }), els.refDivCol,
+          h('label', { for: 'f3-refwc', text: 'Work Center 在' }), els.refWcCol),
+        h('p', { class: 'hint', text: 'CT. = Labor ÷ Base Qty。P003 的 Labor 是做 Base Qty 個的工時，除過之後才是單件工時。Work Center 直接貼到 CT. 右邊的「工作中心」（貼值，不是公式）。' }),
         els.refPreview),
       h('li', { class: 'task' },
         h('h2', { text: '匯出' }),
@@ -174,6 +179,7 @@
     bindSelect(els.refKeyCol, 'refKeyCol');
     bindSelect(els.refValueCol, 'refValueCol');
     bindSelect(els.refDivCol, 'refDivCol');
+    bindSelect(els.refWcCol, 'refWcCol');
     els.startRow.addEventListener('change', function () {
       settings.startRow = els.startRow.value;
       saveSettings();
@@ -328,11 +334,16 @@
     var refKeyCol = colOf(settings.refKeyCol, refCols) || guessKeyColumn(refLabels, refCols);
     var refValueCol = colOf(settings.refValueCol, refCols) || guessColumn(refLabels, refCols, LABOR_HINT);
     var refDivCol = colOf(settings.refDivCol, refCols) || guessColumn(refLabels, refCols, BASE_HINT);
+    var refWcCol = settings.refWcCol === '-' ? 0 : (colOf(settings.refWcCol, refCols) || guessColumn(refLabels, refCols, WC_HINT));
 
     fillSelect(els.keyCol, mainLabels, mainCols, keyCol);
     fillSelect(els.refKeyCol, refLabels, refCols, refKeyCol);
     fillSelect(els.refValueCol, refLabels, refCols, refValueCol);
     fillSelect(els.refDivCol, refLabels, refCols, refDivCol);
+    fillSelect(els.refWcCol, refLabels, refCols, refWcCol);
+    els.refWcCol.options[0].value = '-';
+    els.refWcCol.options[0].text = '不帶入工作中心';
+    if (!refWcCol) els.refWcCol.value = '-';
 
     var keepMain = {}; if (keyCol) keepMain[keyCol] = true;
     ui.renderSheet(els.mainPreview, work.main, {
@@ -341,7 +352,7 @@
         Math.max(0, work.mainExt.lastRow - headerEnd).toLocaleString('en-US') + ' 列資料。'
     });
     var keepRef = {};
-    [refKeyCol, refValueCol, refDivCol].forEach(function (c) { if (c) keepRef[c] = true; });
+    [refKeyCol, refValueCol, refDivCol, refWcCol].forEach(function (c) { if (c) keepRef[c] = true; });
     ui.renderSheet(els.refPreview, work.ref, {
       headerEnd: work.refHeaderRow, lastRow: work.refExt.lastRow, colCount: refCols, rows: 6, keep: keepRef,
       caption: work.ref.name + ' 工作表（前 6 列資料）。共 ' + work.refExt.lastRow.toLocaleString('en-US') + ' 列。'
@@ -361,7 +372,7 @@
     }
     var opts = {
       dataStartRow: sr, keyCol: keyCol, refKeyCol: refKeyCol,
-      refValueCol: refValueCol, refDivCol: refDivCol, header: HEADER
+      refValueCol: refValueCol, refDivCol: refDivCol, refWcCol: refWcCol, header: HEADER, wcHeader: XIO.WC_HEADER
     };
     var plan = XIO.planLookup(work.main, work.ref, Object.assign({ index: S.index }, opts));
 
@@ -382,7 +393,8 @@
       (plan.isNew ? '（原本最後一行之後空一行）' : '（這一行原本就是 CT.，會直接覆蓋）') +
       '。' + plan.rows.length.toLocaleString('en-US') + ' 個料號裡找到 ' +
       plan.found.toLocaleString('en-US') + ' 個' +
-      (plan.missing ? '，找不到 ' + plan.missing.toLocaleString('en-US') + ' 個。' : '，全部都有找到。'),
+      (plan.missing ? '，找不到 ' + plan.missing.toLocaleString('en-US') + ' 個。' : '，全部都有找到。') +
+      (plan.wcCol ? ' 工作中心填在 ' + XIO.numToCol(plan.wcCol) + ' 行（CT. 右邊，P003 的 ' + XIO.numToCol(refWcCol) + ' 行直接貼值）。' : ' 沒有選 Work Center，不帶入工作中心。'),
       false, plan.missing > 0);
 
     renderNotes(plan);
@@ -402,7 +414,7 @@
   }
 
   function clearChoices() {
-    [els.keyCol, els.refKeyCol, els.refValueCol, els.refDivCol].forEach(function (sel) {
+    [els.keyCol, els.refKeyCol, els.refValueCol, els.refDivCol, els.refWcCol].forEach(function (sel) {
       sel.textContent = '';
       sel.appendChild(h('option', { value: '', text: '請選擇' }));
     });
@@ -472,7 +484,8 @@
       h('th', { class: 'colhead', scope: 'col', text: 'Labor' }),
       h('th', { class: 'colhead', scope: 'col', text: 'Base Qty' }),
       h('th', { class: 'colhead', scope: 'col', text: '填入的公式' }),
-      h('th', { class: 'colhead', scope: 'col', text: 'CT.' }));
+      h('th', { class: 'colhead', scope: 'col', text: 'CT.' }),
+      opts.refWcCol ? h('th', { class: 'colhead', scope: 'col', text: '工作中心' }) : null);
     var body = h('tbody');
     plan.rows.slice(0, SHOW).forEach(function (it) {
       body.appendChild(h('tr', { class: it.refRow ? null : 'is-missing' },
@@ -482,7 +495,8 @@
         h('td', { class: 'is-num', text: it.refRow ? it.top : '' }),
         h('td', { class: 'is-num', text: it.refRow ? it.bottom : '' }),
         h('td', { text: it.refRow ? '=' + XIO.lookupFormula(refName, it.refRow, opts) : '' }),
-        h('td', { class: 'is-num is-kept', text: it.error ? it.error : showNumber(it.value) })));
+        h('td', { class: 'is-num is-kept', text: it.error ? it.error : showNumber(it.value) }),
+        opts.refWcCol ? h('td', { class: 'is-kept', text: it.refRow ? (it.wcText || '（空白）') : '' }) : null));
     });
     var more = plan.rows.length - SHOW;
     els.result.appendChild(h('p', {

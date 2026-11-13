@@ -1,6 +1,7 @@
 /*
  * 第 2 步：匯總
- *   算出 MPS 各月的預計總產量（Total），再用 Status 分成量產（M）和試產（R）的合計。
+ *   算出 MPS 各月的預計總產量（Total），再用 Status 分成量產和試產的合計：
+ *   R 算試產，其他的（M、別的字、空白）都算量產，所以量產 + 試產 = Total（和第 6 步一樣）。
  *   第 1 步依類別分段（取像、車用、光機系統），匯總表有兩張：
  *     取像＋車用   放在車用（沒有車用就是取像）最後一列資料之後空一列，兩段一起算
  *     光機系統     放在光機系統最後一列資料之後空一列
@@ -14,10 +15,9 @@
  *
  *            當月                                                             其他月份
  *     Total  =SUM(D5:D74)+SUM(E5:E74)                                        =SUM(F5:F74)
- *     量產   =SUMIF($C$5:$C$74,"M",D5:D74)+SUMIF($C$5:$C$74,"M",E5:E74)       =SUMIF($C$5:$C$74,"M",F5:F74)
+ *     量產   =SUMIF($C$5:$C$74,"<>R",D5:D74)+SUMIF($C$5:$C$74,"<>R",E5:E74)   =SUMIF($C$5:$C$74,"<>R",F5:F74)
  *     試產   =SUMIF($C$5:$C$74,"R",D5:D74)+SUMIF($C$5:$C$74,"R",E5:E74)       =SUMIF($C$5:$C$74,"R",F5:F74)
  *
- *   Status 不是 M 也不是 R 的列只算進 Total，畫面上會列出來提醒。
  *   Total 那一列是淺綠色底（#B5E48C）；整塊外框粗線、裡面細格線。
  *
  *   WIP 和六個月各在哪一行由使用者指定，和第 5 步（計算需求工時）共用同一組設定，
@@ -43,7 +43,7 @@
   var REF_SHEET = 'P003';
   var LABELS = { total: 'Total' };
   // Status 等於 key 的列算進這一組（不分大小寫）：M = 量產、R = 試產（和第 6 步共用）
-  var GROUPS = XIO.STATUS_GROUPS;
+  var GROUPS = XIO.SUMMARY_GROUPS;    // R = 試產，其他的（包括空白）都算量產；量產 + 試產 = Total（和第 6 步一樣）
   var STATUS_GUESS = /status|狀態/i;
   var SUFFIX = '_匯總';
   var KEY_COL = 1;              // 料號在第 1 行
@@ -162,7 +162,7 @@
 
     panel.appendChild(h('div', { class: 'step-head' },
       h('h1', { text: '匯總' }),
-      h('p', { text: '在篩選後的 MPS 加上各月的預計總產量（Total），再用 Status 分成量產（M）和試產（R）的合計。取像＋車用一張、光機系統一張，各放在那一組的下面。當月會先加上 WIP 再算。每格都是公式。' })));
+      h('p', { text: '在篩選後的 MPS 加上各月的預計總產量（Total），再用 Status 分成量產（R 以外的都算）和試產（R）的合計，量產 + 試產 = Total。取像＋車用一張、光機系統一張，各放在那一組的下面。當月會先加上 WIP 再算。每格都是公式。' })));
 
     panel.appendChild(h('ol', { class: 'tasks' },
       h('li', { class: 'task' },
@@ -423,15 +423,12 @@
         bad.join('、') + ' 行有不是數字的格子，Excel 裡這幾個月的匯總會顯示錯誤。請先檢查 MPS 的數量。'));
     }
     GROUPS.forEach(function (gr, k) {
-      if (!plan.counts[k]) {
+      if (!plan.counts[k] && gr.key !== '*') {
         els.notes.appendChild(h('li', { class: 'is-warn' },
           XIO.numToCol(statusCol) + ' 行沒有「' + gr.key + '」的列，' + gr.label + '每個月都會是 0。請確認 Status 選對行。'));
       }
     });
-    if (plan.others.length) {
-      els.notes.appendChild(h('li', { class: 'is-warn' },
-        '有 ' + plan.others.length + ' 列的 Status 不是 M 也不是 R，只會算進 Total，不算進量產、試產。清單在下面。'));
-    }
+    els.notes.appendChild(h('li', null, 'Status 是 R 的算試產，其他的（包括空白）都算量產，所以量產 + 試產 = Total。'));
     if (monthCols.length !== MONTH_COUNT) {
       els.notes.appendChild(h('li', { class: 'is-warn' },
         '目前選了 ' + monthCols.length + ' 個月份，通常是 ' + MONTH_COUNT + ' 個（當月加往後五個月）。'));
@@ -480,7 +477,7 @@
 
     var items = [{ label: LABELS.total, row: plan.totalRow, value: function (m) { return m.total; }, cls: ' is-total' }];
     plan.groups.forEach(function (gr, k) {          // RMA 那張沒有量產、試產
-      items.push({ label: gr.label + '（' + gr.key + '，' + plan.counts[k] + ' 列）', row: plan.groupRows[k],
+      items.push({ label: gr.label + '（' + (gr.key === '*' ? 'R 以外' : gr.key) + '，' + plan.counts[k] + ' 列）', row: plan.groupRows[k],
         value: function (m) { return m.groups[k]; }, cls: '' });
     });
 

@@ -428,3 +428,9 @@ button.step:hover { background: rgba(11, 110, 105, 0.07); }
 .month-head select.in-month { width: auto; min-width: 7rem; }
 .month-auto-box { justify-content: flex-end; }
 .month-auto-box span { font-size: 0.875rem; }
+
+/* 第 8 步：匯出的檔名 */
+.file-name-label { font-weight: 700; margin-left: 0.5rem; }
+.actions .file-name { width: min(100%, 20rem); }
+.export-row { margin-top: 0.5rem; }
+.export-row:empty { display: none; }
