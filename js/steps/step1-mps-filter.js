@@ -706,6 +706,7 @@
     els.nextBtn.disabled = false;
 
     // 給第 2 步用。build() 每次都產生一份全新的活頁簿，後面的步驟可以放心往裡面加工作表。
+    var srcNames = S.reports.map(function (R) { return R.fileName; });
     IEApp.state.mpsFiltered = {
       sourceName: S.reports.map(function (R) { return R.fileName; }).join('、'),
       outName: outputName(),
@@ -714,7 +715,11 @@
       headerEnd: result.headerEnd,
       statusCol: sp,
       sections: result.sections,
-      build: function () { return XIO.filterSections(parts, common, rma).workbook; }
+      build: function () {
+        var wb = XIO.filterSections(parts, common, rma).workbook;
+        XIO.setSourceFiles(wb, srcNames);       // 上傳的 MPS 檔名，最後總表寫到 M1
+        return wb;
+      }
     };
   }
 

@@ -2558,6 +2558,7 @@
    * o.manpower   「人力」工作表（第 7 步匯入的）：整張貼進總表的 O 行起（MANPOWER_COL），
    *              o.links 裡指到它的格子會改成指到總表裡的位置
    * o.dropManpower  true = 貼完之後把「人力」工作表拿掉（匯出時用；畫面預覽時不拿掉，才能重做）
+   * o.sourceFiles  第 1 步上傳的 MPS 檔名（陣列）：總表 M1 寫「MPS資料來源」，M2 寫檔名，一個檔名一行（沒給就看活頁簿記的）
    * 總表排在第一個工作表，打開檔案時顯示總表。
    * 回傳 { worksheet, rows: { hoursMass: 9, … }, rows2, monthCol, months, manpower: { firstCol, lastCol, lastRow } }
    */
@@ -2755,6 +2756,25 @@
       }
     }
 
+    // 第 1 步上傳的 MPS 檔名：M1 寫「MPS資料來源」（粗體），M2 寫檔名，一個檔名一行（自動換行、靠上）
+    var srcFiles = o.sourceFiles || getSourceFiles(wb);
+    if (srcFiles.length) {
+      var m1 = ws.getCell(1, SOURCE_COL);
+      m1.value = SOURCE_TITLE;
+      m1.font = font({ bold: true });
+      m1.alignment = { vertical: 'middle', horizontal: 'left' };
+      var m2 = ws.getCell(2, SOURCE_COL);
+      m2.value = srcFiles.join('\n');
+      m2.font = font();
+      m2.alignment = { wrapText: true, vertical: 'top', horizontal: 'left' };
+      var mcol = ws.getColumn(SOURCE_COL);
+      var longest = srcFiles.reduce(function (n, s) { return Math.max(n, s.length); }, 0);
+      mcol.width = Math.min(Math.max(mcol.width || 0, longest * 1.3 + 2, 20), 80);
+      var r2 = ws.getRow(2);
+      var need = srcFiles.length * 16 + 4;
+      if (!r2.height || r2.height < need) r2.height = need;
+    }
+
     // 「人力」貼進總表的 O 行起；指到「人力」的格子改成指到總表裡的位置
     var mpInfo = null;
     var links = o.links || {};
@@ -2874,6 +2894,19 @@
   // 「人力」放進總表的哪一行開始（O 行）
   var MANPOWER_COL = 15;
 
+  /* ---------- 第 1 步上傳的 MPS 檔名：記在活頁簿的「描述」屬性，後面每一步都帶著；總表 M1 寫標題、M2 寫檔名 ---------- */
+  var SOURCE_PREFIX = 'MPS 來源檔：';
+  var SOURCE_COL = 13;                 // 總表的 M 行
+  var SOURCE_TITLE = 'MPS資料來源';      // M1 的標題（檔名寫在 M2）
+  function setSourceFiles(wb, names) {
+    wb.description = SOURCE_PREFIX + '\n' + (names || []).join('\n');
+  }
+  function getSourceFiles(wb) {
+    var d = String((wb && wb.description) || '');
+    if (d.indexOf(SOURCE_PREFIX) !== 0) return [];
+    return d.slice(SOURCE_PREFIX.length).split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+
   /*
    * 把人力報表整張貼進總表，從 firstCol 那一行開始（列號不變）：
    * 值（公式換成數值）、格式、合併儲存格、行寬照抄；列高取兩邊比較高的（同一列總表也在用）。
@@ -2919,7 +2952,7 @@
   }
 
   var ExcelIO = {
-    VERSION: 21,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
+    VERSION: 23,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
     colToNum: colToNum,
     numToCol: numToCol,
     normalizeText: normalizeText,
@@ -2982,6 +3015,8 @@
     OFFLINE_RATE: OFFLINE_RATE,
     REPORT_OFFLINE: REPORT_OFFLINE,
     MANPOWER_COL: MANPOWER_COL,
+    setSourceFiles: setSourceFiles,
+    getSourceFiles: getSourceFiles,
     YO_LIMIT_DEFAULT: YO_LIMIT_DEFAULT,
     REPORT_SECOND_OFFSET: REPORT_SECOND_OFFSET,
     findReportLinks: findReportLinks,
