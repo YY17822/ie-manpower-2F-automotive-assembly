@@ -48,7 +48,8 @@
   // statusPos：Status 是「第幾個保留的行」（1 起算），也就是新檔的第幾行
   // rma：挑出 RMA 的條件（一組，所有報表共用）
   //   mode 'fz' 模糊比對（zValues：各輸入框的值）／'eq' 等於（values：逗號分開）；col：新檔的第幾行（1 起算）
-  var RMA_DEFAULT = { mode: 'fz', col: '', values: '', zValues: ['', '', ''] };
+  //   reserve：RMA 區除了挑出的列，再預留幾列空白（預設 6）
+  var RMA_DEFAULT = { mode: 'fz', col: '', values: '', zValues: ['', '', ''], reserve: '6' };
   var DEFAULTS = { startRow: 5, selCol: 'A', reports: [], statusPos: '', rma: RMA_DEFAULT };
 
   // 這一步的狀態（切到別的步驟再回來時還在）
@@ -77,7 +78,8 @@
       mode: r.mode === 'eq' ? 'eq' : 'fz',
       col: r.col === undefined || r.col === null ? '' : String(r.col),
       values: r.values ? String(r.values) : '',
-      zValues: Array.isArray(r.zValues) && r.zValues.length ? r.zValues.map(function (v) { return String(v == null ? '' : v); }) : ['', '', '']
+      zValues: Array.isArray(r.zValues) && r.zValues.length ? r.zValues.map(function (v) { return String(v == null ? '' : v); }) : ['', '', ''],
+      reserve: r.reserve === undefined || r.reserve === null || r.reserve === '' ? String(XIO.RMA_RESERVE_DEFAULT) : String(r.reserve)
     };
     return out;
   }
@@ -680,8 +682,11 @@
       var who = [];
       result.parts.forEach(function (p, i) { if (p.cat === s.key && p.matched) who.push('報表 ' + (i + 1)); });
       els.parts.appendChild(h('li', {
-        text: '【' + s.label + '】標題在第 ' + s.titleRow + ' 列，' + (isRma ? '' : who.join('、') + ' ') + '共 ' + s.matched.toLocaleString('en-US') + ' 列' +
-          (s.matched ? '，在第 ' + s.firstRow + '–' + s.lastRow + ' 列' : '（沒有項目）')
+        text: isRma
+          ? '【RMA】標題在第 ' + s.titleRow + ' 列，挑出 ' + s.matched + ' 列' +
+            (s.reserved ? '，RMA 區第 ' + (s.titleRow + 1) + '–' + s.lastRow + ' 列共 ' + s.reserved + ' 列（空白 ' + (s.reserved - s.matched) + ' 列可以手動填）' : '（沒有預留列）')
+          : '【' + s.label + '】標題在第 ' + s.titleRow + ' 列，' + who.join('、') + ' 共 ' + s.matched.toLocaleString('en-US') + ' 列' +
+            (s.matched ? '，在第 ' + s.firstRow + '–' + s.lastRow + ' 列' : '（沒有項目）')
       }));
     });
     result.sections.forEach(function (s, k) {
@@ -1157,14 +1162,20 @@
     E.chips = h('div', { class: 'chips' });
     E.msg = h('p', { class: 'summary', 'aria-live': 'polite' });
     E.list = h('div', { class: 'fz-preview' });
+    E.reserve = h('input', { id: 'f-rma-reserve', type: 'text', class: 'in in-tiny', inputmode: 'numeric', autocomplete: 'off', value: st.reserve });
+    E.reserveNote = h('span', { class: 'hint-inline' });
     E.box = h('div', null,
       h('div', { class: 'field-row radio-row', role: 'radiogroup', 'aria-label': 'RMA 的篩選方式' },
         h('span', { class: 'field-name', text: '篩選方式' }),
         h('label', { for: 'f-rma-mode-fz' }, E.modeFz, '指定某一行，模糊比對（含有某些字）'),
         h('label', { for: 'f-rma-mode-eq' }, E.modeEq, '指定某一行，等於某些值')),
       h('div', { class: 'field-row' }, h('label', { for: 'f-rma-col', text: '比對的行' }), E.col),
-      E.boxFz, E.boxEq, E.chips, E.msg, E.list);
+      E.boxFz, E.boxEq, E.chips, E.msg, E.list,
+      h('div', { class: 'field-row rma-reserve' },
+        h('label', { for: 'f-rma-reserve', text: 'RMA 區預留' }), E.reserve, h('span', { text: '列' }), E.reserveNote),
+      h('p', { class: 'hint', text: '【RMA】區是挑出的 RMA 再加上這麼多列空白列（有格線，CT.、工作中心、需求工時都先放好公式），產出 Excel 後直接填料號和數量就會自動算，不用改公式。沒有挑出時，就只有這幾列空白。設 0 就是不預留。' }));
     buildRmaInputs();
+    E.reserve.addEventListener('input', function () { settings.rma.reserve = E.reserve.value; schedule(); });
 
     function setMode(m) {
       settings.rma.mode = m;
@@ -1227,7 +1238,12 @@
     if (!(col >= 1 && col <= n0)) col = 0;
     var skip = {};
     if (settings.rma.mode !== 'eq') Object.keys(S.rmaOff).forEach(function (k) { if (S.rmaOff[k]) skip[k] = true; });
-    return { col: col, fuzzy: settings.rma.mode !== 'eq', values: rmaValues(), skip: skip };
+    return { col: col, fuzzy: settings.rma.mode !== 'eq', values: rmaValues(), skip: skip, reserve: rmaReserve() };
+  }
+  // RMA 區預留幾列（不是數字就用預設 6）
+  function rmaReserve() {
+    var n = parseInt(XIO.normalizeText(settings.rma.reserve), 10);
+    return n >= 0 ? n : XIO.RMA_RESERVE_DEFAULT;
   }
 
   // 上面的設定還沒好時：選單、清單都清掉
@@ -1259,6 +1275,7 @@
     E.chips.textContent = '';
     E.list.textContent = '';
     var colName = conf.col ? XIO.numToCol(conf.col) : '';
+    E.reserveNote.textContent = '（沒有挑出 RMA，RMA 區共 ' + XIO.rmaRowCount(0, conf.reserve) + ' 列空白）';
     if (!conf.col) {
       E.msg.textContent = '還沒選比對的行，這個月不挑 RMA（【RMA】段一樣會放，沒有項目）。';
       E.msg.className = 'summary';
@@ -1286,6 +1303,8 @@
     }
     var off = scan.hits.filter(function (x) { return x.skipped; }).length;
     var picked = scan.hits.length - off;
+    var totalRows = XIO.rmaRowCount(picked, conf.reserve);
+    E.reserveNote.textContent = '（這次挑出 ' + picked + ' 列，RMA 區共 ' + totalRows + ' 列，空白 ' + (totalRows - picked) + ' 列）';
     E.msg.textContent = 'RMA：挑出 ' + picked.toLocaleString('en-US') + ' 列' +
       (off ? '（符合 ' + scan.hits.length.toLocaleString('en-US') + ' 列，取消勾選 ' + off + ' 列）' : '') + '。';
     E.msg.className = 'summary';

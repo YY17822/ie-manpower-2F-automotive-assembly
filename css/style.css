@@ -434,3 +434,7 @@ button.step:hover { background: rgba(11, 110, 105, 0.07); }
 .actions .file-name { width: min(100%, 20rem); }
 .export-row { margin-top: 0.5rem; }
 .export-row:empty { display: none; }
+
+/* 第 1 步：RMA 區預留列數 */
+.rma-reserve { margin-top: 1rem; }
+.hint-inline { font-size: 0.875rem; color: var(--ink-2); }

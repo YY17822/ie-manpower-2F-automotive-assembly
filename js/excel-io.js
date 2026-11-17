@@ -948,6 +948,8 @@
    *   rma     RMA 的條件（見 rmaMatcher()）。有給的話（就算沒有條件）最後一定放【RMA】段：
    *           最後一張匯總表下面空 3 列放【RMA】標題（底色 #FFCAD4），底下是挑出來的列（照 取像 → 車用 → 光機系統 的順序），
    *           再空 1 列給第 2 步的 RMA Total。挑去 RMA 的列不會留在原本的段裡；一類的列全部挑走時，那一類整段不放。
+   *           RMA 區的列數：挑出的列數 + rma.reserve（預留數，預設 6）。
+   *           挑出的放最上面，其餘是空白預留列（細格線），列數記在活頁簿裡（setRmaRows）。
    * 回傳和 filter() 一樣，另外多：
    *   parts     [{ matched, rma, total, firstRow, lastRow, cat }]（和 parts 同順序；matched 不含挑去 RMA 的列）
    *   sections  [{ key, label, group, titleRow, firstRow, lastRow, matched }]（最後一個是 RMA）
@@ -1016,9 +1018,16 @@
         rs.matched += rows.length;
       });
       matched += rs.matched;
-      rs.lastRow = rNext - 1;
+      // 預留列：空白、畫細格線，產出 Excel 後可以手動填
+      var total = rmaRowCount(rs.matched, rma.reserve);
+      rs.reserved = total;
+      for (var rr = rTitle + 1 + rs.matched; rr <= rTitle + total; rr++) {
+        for (var rc = 1; rc <= colCount; rc++) ws.getCell(rr, rc).style = { border: THIN_BOX };
+      }
+      rs.lastRow = rTitle + total;
       sections.push(rs);
-      cursor = rNext;
+      cursor = rTitle + total + 1;
+      setRmaRows(res.workbook, total);
     }
     res.matchedRows = matched;
     res.totalRows = picked.reduce(function (n, x) { return n + x.total; }, 0);
@@ -1428,6 +1437,21 @@
 
     if (plan.isNew) main.getColumn(col).width = 11;
 
+    // RMA 區的空白預留列：CT. 放查表公式，填了料號就自動從 P003 抓 Labor ÷ Base Qty，料號空白時顯示空白
+    //   =IFERROR(INDEX('P003'!M:M,MATCH(A86,'P003'!A:A,0))/INDEX('P003'!K:K,MATCH(A86,'P003'!A:A,0)),"")
+    var reserve = mpsLayout(main, o).reserveRows;
+    var P = sheetRef(ref.name);
+    function whole(c) { var L = numToCol(c); return P + L + ':' + L; }
+    function matchOf(r) { return 'MATCH(' + numToCol(o.keyCol) + r + ',' + whole(o.refKeyCol) + ',0)'; }
+    reserve.forEach(function (r) {
+      var cell = main.getCell(r, col);
+      cell.style = { border: THIN_BOX, numFmt: 'General' };
+      var f = 'INDEX(' + whole(o.refValueCol) + ',' + matchOf(r) + ')';
+      if (o.refDivCol) f += '/INDEX(' + whole(o.refDivCol) + ',' + matchOf(r) + ')';
+      cell.value = { formula: 'IFERROR(' + f + ',"")', result: '' };
+    });
+    plan.reserveRows = reserve;
+
     // 工作中心：公式參照 P003 同一列的 Work Center（例如 ='P003'!N5），點儲存格看得到是哪一格；整行置中。
     // P003 那一格是空白時寫 =IF('P003'!N5="","",'P003'!N5)，Excel 才不會顯示 0。找不到的料號留空白、淺紅色底
     if (plan.wcCol) {
@@ -1473,6 +1497,16 @@
         if (r < o.dataStartRow || r > plan.lastDataRow || wdone[r]) return;
         var old = row.findCell(wc);
         if (old) old.value = null;
+      });
+      // 空白預留列：工作中心也查表，料號空白或找不到時顯示空白
+      reserve.forEach(function (r) {
+        var cell = main.getCell(r, wc);
+        cell.style = { border: THIN_BOX, alignment: { horizontal: 'center', vertical: 'middle' } };
+        var key = numToCol(o.keyCol) + r;
+        cell.value = {
+          formula: 'IF(' + key + '="","",IFERROR(INDEX(' + whole(o.refWcCol) + ',' + matchOf(r) + ')&"",""))',
+          result: ''
+        };
       });
       if (!main.getColumn(wc).width || main.getColumn(wc).width < 12) main.getColumn(wc).width = 12;
       main.getColumn(wc).alignment = { horizontal: 'center', vertical: 'middle' };   // 整行置中（之後在空白格打字也置中）
@@ -1669,6 +1703,19 @@
       }
     });
 
+    // RMA 區的空白預留列：填了料號、數量就自動算，料號空白時顯示空白
+    //   當月 =IF($A86="","",(D86+E86)*L86)，其餘月 =IF($A86="","",F86*L86)
+    var keyL = numToCol(o.keyCol || 1), ctL2 = numToCol(o.ctCol), wipL2 = numToCol(o.wipCol);
+    mpsLayout(main, o).reserveRows.forEach(function (r) {
+      for (var i = 0; i < n; i++) {
+        var qL = numToCol(o.monthCols[i]);
+        var calc = i === 0 ? '(' + wipL2 + r + '+' + qL + r + ')*' + ctL2 + r : qL + r + '*' + ctL2 + r;
+        var cell = main.getCell(r, start + i);
+        cell.style = { border: THIN_BOX, numFmt: INTEGER_FORMAT };
+        cell.value = { formula: 'IF($' + keyL + r + '="","",' + calc + ')', result: '' };
+      }
+    });
+
     for (c = start; c <= end; c++) main.getColumn(c).width = 12;
 
     var wb = main.workbook;
@@ -1753,6 +1800,20 @@
   var RMA_SECTION = { key: 'rma', label: 'RMA', group: 2 };
   var RMA_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFCAD4' } };
   var RMA_GAP = 3;                              // 最後一張匯總表下面空幾列才是【RMA】
+  // RMA 區的預留列：挑出的 RMA 放在最上面，下面再接預留的空白列（畫好格線、帶好公式），產出 Excel 後可以手動填。
+  //   列數 = 挑出的列數 + 預留列數
+  var RMA_RESERVE_DEFAULT = 6;
+  function rmaRowCount(picked, reserve) {
+    reserve = reserve >= 0 ? reserve : RMA_RESERVE_DEFAULT;
+    return (picked || 0) + reserve;
+  }
+  // RMA 區有幾列記在活頁簿的「關鍵字」屬性（後面每一步、中途匯出再上傳的檔案都知道預留列在哪）
+  var RMA_ROWS_TAG = 'ie-manpower:rmaRows=';
+  function setRmaRows(wb, n) { wb.keywords = RMA_ROWS_TAG + n; }
+  function getRmaRows(wb) {
+    var m = /ie-manpower:rmaRows=(\d+)/.exec(String((wb && wb.keywords) || ''));
+    return m ? parseInt(m[1], 10) : null;
+  }
   var SECTION_GAP = 3;                          // 同一組的兩段之間空幾列（取像最後一列之後空 3 列才是【車用】）
   var GROUP_GAP = 6;                            // 一組的匯總表下面空幾列才是下一組（【光機系統】）
   var TOTALS_ROWS = 1 + STATUS_GROUPS.length;   // 匯總表幾列：Total、量產、試產
@@ -1777,6 +1838,7 @@
    *             要一起匯總的段（取像＋車用、光機系統、RMA）；tableRow = 匯總表第一列（這一組最後一列資料之後空一列）
    *             RMA 沒有項目時 ranges 是空的，tableRow 是標題下面空一列
    *   legacy    true = 舊版的檔案（沒有類別標題）：整塊資料當作一段、一張匯總表
+   *   reserveRows  RMA 區空白的預留列（列號；後面的步驟在這些列放查表、計算公式）
    *   dataRows  料號那一行有內容的資料列（列號，由上往下）；標題列、空列、匯總表都不算
    *   count     資料列數
    * }
@@ -1825,9 +1887,28 @@
         g.lastRow = s.titleRow;                    // RMA 沒有項目：Total 在標題下面空一列
       }
     });
+    // RMA 區有預留列（第 1 步記在活頁簿裡）：範圍是標題下面那幾列，空白的預留列也算在裡面
+    var reserveRows = [];
+    var rmaRows = getRmaRows(ws.workbook);
+    if (rmaRows !== null) {
+      groups.forEach(function (g) {
+        if (!g.isRma) return;
+        var t = g.sections[0].titleRow;
+        g.ranges = rmaRows > 0 ? [[t + 1, t + rmaRows]] : [];
+        g.firstRow = rmaRows > 0 ? t + 1 : 0;
+        g.lastRow = t + rmaRows;
+        g.reserved = rmaRows;
+        var isData = {};
+        dataRows.forEach(function (r) { isData[r] = true; });
+        for (var rr = t + 1; rr <= t + rmaRows; rr++) if (!isData[rr]) reserveRows.push(rr);
+      });
+    }
     groups.forEach(function (g) { g.tableRow = g.lastRow + 2; });
-    return { sections: sections, groups: groups, legacy: legacy, dataRows: dataRows, count: dataRows.length };
+    return { sections: sections, groups: groups, legacy: legacy, dataRows: dataRows, count: dataRows.length, reserveRows: reserveRows };
   }
+
+  // 空白預留列的格子：細格線
+  var THIN_BOX = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
 
   // 某一組（取像＋車用、光機系統）的資料列
   function groupRowsOf(layout, g) {
@@ -2952,7 +3033,7 @@
   }
 
   var ExcelIO = {
-    VERSION: 23,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
+    VERSION: 25,            // 程式版本，顯示在畫面右上角；每次改版加 1（index.html 的 ?v= 也要改）
     colToNum: colToNum,
     numToCol: numToCol,
     normalizeText: normalizeText,
@@ -2974,6 +3055,9 @@
     filter: filter,
     filterSections: filterSections,
     rmaScan: rmaScan,
+    rmaRowCount: rmaRowCount,
+    RMA_RESERVE_DEFAULT: RMA_RESERVE_DEFAULT,
+    getRmaRows: getRmaRows,
     ttlBlocks: ttlBlocks,
     blockKey: blockKey,
     RMA_SECTION: RMA_SECTION,
